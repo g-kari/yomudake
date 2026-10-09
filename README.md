@@ -13,9 +13,9 @@ URLをMarkdownに変換し、本文だけを読みやすいHTMLとして公開�
 
 Cloudflare Workersへ直接デプロイするコードとテストです。本番Worker、D1、AI binding、管理用Accessアプリはまだ設定・デプロイしていません。実URL変換と本番ログインは未検証です。
 
-一般のURLを読むことが目標ですが、初期のURL取得は許可したホストだけに限定します。任意サイトへの対応が完了した状態ではありません。
+一般の公開HTTPS URLを、サイトごとの許可リストなしで取得するコードです。取得前と各転送先でCloudflareの公開DNSを確認し、非公開・特殊用途のIPを拒否します。本番のネットワーク境界と実際の変換はまだ検証していません。
 
-URL変換はCloudflare Workers AIの `AI.toMarkdown()` を呼びます。未設定のAI binding、空の取得先許可リスト、未設定の所有者認証は、失敗として止めます。ブラウザー描画による動的ページ取得は含みません。
+URL変換はCloudflare Workers AIの `AI.toMarkdown()` を呼びます。未設定のAI binding、確認できない公開DNS、未設定の所有者認証は、失敗として止めます。ブラウザー描画による動的ページ取得は含みません。
 
 ## 構成
 
@@ -46,7 +46,7 @@ Node.js 24以上を使用します。
 3. AI bindingを接続
 4. 1つの管理用Accessアプリで `/admin` と `/api/*` の両方を保護し、同じAUDを使用。許可する所有者は1人だけ。公開記事ルート `/p/*` はAccessで囲わない
 5. 実行環境に `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`、`OWNER_EMAIL` を設定。メールや認証情報をリポジトリへ書き込まない
-6. `FETCH_ALLOWED_HOSTS` に取得先の正確なホスト名をカンマ区切りで設定。ワイルドカードを使わない
+6. `global_fetch_strictly_public` を維持し、VPC・内部サービス・Browser Run・proxyのbindingを追加しない。configはJSON構文のまま設定し、`npm run deploy` のpreflightを通す
 7. 匿名・別ユーザー・偽造JWTの拒否と、所有者の編集を本番で検証してから運用
 
 テンプレートのCPU上限は10msです。これは利用料金の上限ではありません。Worker/D1/AIはそれぞれ無料枠と課金条件があり、全体が無料と確認したものではありません。
@@ -55,16 +55,19 @@ Node.js 24以上を使用します。
 
 ## URL取得と変換の制限
 
-- HTTPS、認証情報なし、標準ポート、許可済みの正確なホスト名だけ
-- 内部名、IPリテラル、一般的な認証用query名、自己ホスト、未許可のリダイレクトを拒否。queryの名前だけでは、すべての私的・署名付きURLを判定できません。非公開・トークン付きURLは入力しないでください
+- 一般のHTTPSホスト名、認証情報なし、443番ポートだけ。IPリテラルと非正規のホスト表記は拒否
+- 内部名、IPリテラル、一般的な認証用query名、自己ホスト、内部向けリダイレクトを拒否。queryの名前だけでは、すべての私的・署名付きURLを判定できません。非公開・トークン付きURLは入力しないでください
 - 新規GETに固定ヘッダーだけを送る。閲覧者のCookie/Authorizationは渡さない
 - 手動リダイレクトは3回まで。転送先を毎回再検査
-- 総取得時間10秒、解凍後HTML 1MB、変換後Markdown 200KBまで
+- 固定Cloudflare DoHへA/AAAAの両方を照会し、関連するCNAME転送と全回答IPを検査。DNS失敗・非公開IP混在・無関係な回答は停止
+- DNSと転送と本文読込を合わせて10秒、body readerで読んだHTML 1MB、参照除去後HTMLも1MB、変換後Markdown 200KBまで
+- 変換の画面側待機は30秒まで。これはCloudflare側処理のキャンセル保証ではない
+- HTTPまたは先頭1KBのmeta charset宣言に対応したTextDecoderで本文を復号
 - 入力HTMLをparse5で解析し、参照・実行要素や属性を除いてAIへ渡す
 - 外部リンクは一時的なローカル参照に置き換え、変換後に検証済みのURLを戻す
 - Cloudflareの `global_fetch_strictly_public` を有効化
 
-DNSを先に確認するだけでは、接続先IPを固定できません。この実装は許可したホストの運営者・DNSとCloudflareの公開インターネット向けfetch境界を信頼します。任意ドメインでの厳密な接続時IP制御は保証しません。必要なら接続IPを検証・固定する専用取得gatewayが別途必要です。
+DNSを先に確認するだけでは、接続先IPを固定できません。DNSの再解決で確認した公開IPと実接続先が変わり得ます。内部到達の最後の境界は、Cloudflare hosted Workersのmediated public Internet fetchとstrictly-public設定に依存します。ローカルNode/Miniflareや独自workerdのネットワーク設定に同じ保証はありません。詳しくは [URL取得の設計](docs/url-ingestion.md) を参照してください。
 
 Markdownの書き出しは元のMarkdownを保持します。別のMarkdownビューアーではHTMLや画像の扱いが異なる場合があります。
 
@@ -76,4 +79,5 @@ Markdownの書き出しは元のMarkdownを保持します。別のMarkdownビ�
 - [AI binding](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/usage/binding/)
 - [HTML conversion](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/how-it-works/)
 - [Access JWT validation](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)
+- [Hosted Workers security model](https://developers.cloudflare.com/workers/reference/security-model/#api-design)
 - [Public-only global fetch](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public)

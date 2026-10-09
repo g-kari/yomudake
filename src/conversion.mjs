@@ -1,6 +1,6 @@
 import {parse} from 'parse5';
 import {safeHttpUrl} from './security.mjs';
-import {fetchPublicHtml,IngestError} from './fetch-html.mjs';
+import {fetchPublicHtml,IngestError,withAbort} from './fetch-html.mjs';
 const ALLOWED=new Set(['main','article','section','div','p','h1','h2','h3','h4','h5','h6','strong','b','em','i','u','s','ul','ol','li','blockquote','pre','code','hr','br','table','thead','tbody','tr','th','td','dl','dt','dd','a']);
 const OMIT=new Set(['script','style','head','base','meta','link','img','picture','source','video','audio','iframe','object','embed','svg','math','form','input','button','select','textarea','noscript','template']);
 const escape=s=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -29,11 +29,15 @@ export function sanitizeConversionInput(html,sourceUrl) {
 export function restoreLinks(markdown,links) {
  return markdown.replace(/\]\((?:https:\/\/yomudake\.invalid\/?)?#yomudake-link-(\d+)\)/g,(whole,n)=>links[Number(n)]?`](${links[Number(n)]})`:whole);
 }
-export async function convertUrl(value,env,{ownHost='',fetcher=fetch}={}) {
+export async function convertUrl(value,env,{ownHost='',fetcher=fetch,resolveHostname,conversionTimeoutMs=30000}={}) {
  if(!env.AI?.toMarkdown)throw new IngestError('Cloudflareの変換機能が未接続です。',503);
- const raw=await fetchPublicHtml(value,{allowedHosts:env.FETCH_ALLOWED_HOSTS,ownHost,fetcher});
+ const raw=await fetchPublicHtml(value,{ownHost,fetcher,resolveHostname});
  const sanitized=sanitizeConversionInput(raw.html,raw.sourceUrl);
- const result=await env.AI.toMarkdown({name:'page.html',blob:new Blob([sanitized.html],{type:'text/html'})},{conversionOptions:{output:{format:'markdown'},html:{hostname:'https://yomudake.invalid',cssSelector:'body'}}});
+ if(new TextEncoder().encode(sanitized.html).byteLength>1000000)throw new IngestError('変換用HTMLが1MBを超えています。',413);
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),conversionTimeoutMs);let result;
+ try{result=await withAbort(env.AI.toMarkdown({name:'page.html',blob:new Blob([sanitized.html],{type:'text/html'})},{conversionOptions:{output:{format:'markdown'},html:{hostname:'https://yomudake.invalid',cssSelector:'body'}}}),controller.signal);}
+ catch(error){if(controller.signal.aborted)throw new IngestError('Markdown変換の待機がタイムアウトしました。本文は残っています。',504);throw error;}
+ finally{clearTimeout(timer);}
  const first=Array.isArray(result)?result[0]:result;
  if(!first||first.format==='error'||typeof first.data!=='string')throw new IngestError('Markdown変換が完了しませんでした。',502);
  const markdown=restoreLinks(first.data,sanitized.links);
