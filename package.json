@@ -1,0 +1,32 @@
+{
+  "name": "yomudake",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "types": "wrangler types --config wrangler.example.jsonc",
+    "dev": "wrangler dev --config wrangler.local.jsonc --local",
+    "deploy": "node scripts/require-config.mjs && npm run build && wrangler deploy --config wrangler.jsonc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jose": "6.2.12",
+    "parse5": "8.0.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261009.1",
+    "esbuild": "0.28.2",
+    "wrangler": "4.149.0",
+    "typescript": "5.9.3",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3"
+  }
+}
