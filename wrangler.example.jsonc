@@ -27,8 +27,7 @@
   },
   "vars": {
     "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": "",
-    "FETCH_ALLOWED_HOSTS": ""
+    "ACCESS_AUD": ""
   },
   "limits": {
     "cpu_ms": 10

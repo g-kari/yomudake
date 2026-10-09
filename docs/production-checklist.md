@@ -5,7 +5,7 @@
 - [ ] 確認済みのCloudflareアカウント・Worker名・独自ホスト名
 - [ ] 専用D1、AI binding、Accessアプリ/所有者限定ポリシーの作成承認
 - [ ] Worker/D1のプラン・無料枠・超過の扱い、課金上限の確認
-- [ ] 許可する取得先ホスト名の確認
+- [ ] 公開向けglobal fetch、固定DoH、VPC/service/browser/proxy bindingなしの実配置metadata確認
 - [ ] 既存アプリのAccess policyやOAuthを変更しない
 - [ ] Secrets/所有者メール/個人データがソースに含まれていない
 
@@ -19,7 +19,7 @@
 - [ ] 公開した合成記事だけが匿名GETで読める
 - [ ] 公開側のPOST/PUT/DELETEは拒否される
 - [ ] 実際の `AI.toMarkdown()` で合成HTMLの変換を確認
-- [ ] URLの内部IP/認証情報/未許可転送/サイズ超過/timeoutを拒否
+- [ ] URLの内部IP/認証情報/内部向け転送/DNS不正/サイズ超過/timeoutを拒否
 - [ ] 画像やスクリプトなどへのサブリクエストがアプリから発生しない
 - [ ] デスクトップと390px幅で閲覧・編集・失敗・再操作を確認
 - [ ] 非公開に戻した記事が匿名GETで取得できなくなる
