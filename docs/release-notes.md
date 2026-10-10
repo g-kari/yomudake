@@ -1,5 +1,13 @@
 # 更新記録
 
+## 2026-10-10: Workersの公開DNS照会をnative fetchに対応
+
+- 本人の再試行で `SOURCE_DNS_ERROR` が返り、取得元・AIより前のDNS確認で止まることを確認。固定版workerdで同じコードを実行すると、DoHの `redirect: 'error'` がRequest作成時にTypeErrorとなり、外向き通信より前に失敗することを再現した。
+- DoHは `redirect: 'manual'` に変更し、既存のHTTP成功判定で全転送応答を拒否する。固定Cloudflare resolver、A/AAAA両方、CNAME関連性、全回答IP、サイズ・総時間・各転送先の再検査、strictly-public設定を維持する。resolverの切替・DNS確認の省略は行わない。
+- 安全な公開DNS照会で確認した、Questionの末尾dotがない応答にも対応。正確なhostname/query typeの一致は維持し、末尾dotを0個か1個だけ同一視する。
+- Wranglerで既にlockされていたMiniflareを同じ固定版でテスト用の直接依存に宣言。native workerdの合成ネットワーク試験を追加し、通常・dotなし応答、DoH転送拒否、混在した非公開IP拒否、取得元転送時のDNS再照会を検証する。本番binding/設定・依存のバージョン・リソース・認証を変更しない。
+- この修正は再現したDNS段階のコード不具合を対象とする。実X投稿の取得・変換成功は未確認で、X専用adapterやアクセス制限の回避は含まない。
+
 ## 記事一覧の読み込みと復旧
 
 - 記事一覧の読み込み中と、取得に失敗した状態を一覧の近くに表示します。未取得や失敗を「保存した記事がない」状態として表示しません。

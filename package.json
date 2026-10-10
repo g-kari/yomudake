@@ -28,6 +28,7 @@
     "@types/react-dom": "19.2.3",
     "esbuild": "0.28.2",
     "happy-dom": "20.9.0",
+    "miniflare": "5.20261006.1-alpha",
     "playwright": "1.62.1",
     "typescript": "5.9.3",
     "wrangler": "4.149.0"
