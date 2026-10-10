@@ -7,6 +7,7 @@
 - ネイティブのdetails/summaryとfragment linkを使い、キーボード・フォーカス・履歴・再読込み、320/390/768/1440pxを合成記事で検証します。HTML serializerは生成した見出しIDと移動先のtabindexだけを許可し、任意のMarkdown属性を許可しません。
 - 見出しIDは現在の本文順の `yomu-section-N` です。後で見出しの数や順を編集すると番号が変わります。元のMarkdown・出典付きMarkdown書き出し・公開状態・認証・CSP・HTMLのno-transformを変更しません。管理previewには目次を追加しません。
 - 本番の実記事、所有者ログイン、実AI変換や元のX投稿取得を使った検証ではありません。URL変換の既存調査とは独立した読取UX改善です。
+- 既存browser gateが見つけた管理画面の外部リンク確認の再開raceも修正。戻る/Escapeの後に別のリンクをすぐ開いても、遅れて届く以前のnative close通知で新しい確認dialogを閉じません。明示的な閉じる操作と元triggerへのfocus、下書き保持を維持し、遅延closeイベントの回帰を追加しました。
 
 ## 2026-10-10: Workersの公開DNS照会をnative fetchに対応
 
