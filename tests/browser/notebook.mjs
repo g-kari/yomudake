@@ -14,6 +14,9 @@ try {
  await page.goto('http://127.0.0.1:4179/admin');
  await page.getByRole('button',{name:/余白をつくる、小さな習慣/}).click();
  assert.equal(await page.locator('#preview-panel').isVisible(),true);assert.equal(await page.locator('#markdown-panel').isVisible(),false);
+ const selectedColor=await page.locator('.draft-row.selected').evaluate(el=>getComputedStyle(el).backgroundColor);assert.equal(selectedColor,'rgb(255, 251, 230)');
+ const saveColor=await page.getByRole('button',{name:'下書き保存',exact:true}).evaluate(el=>getComputedStyle(el).backgroundColor);assert.equal(saveColor,'rgb(23, 107, 115)');
+ results.push({name:'yellow selected index survives hover and draft saving has the selected teal primary style',ok:true});
  await page.screenshot({path:out+'desktop-preview.png',fullPage:true});
  for (const width of [320,390,768,1440]) {
   await page.setViewportSize({width,height:1000});

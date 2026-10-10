@@ -126,7 +126,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
    </section>
    <section className="publish-bar" aria-label="記事の保存と公開">
     <label className="rights-check"><input disabled={busy} type="checkbox" checked={rights} onChange={e=>{draftChanged();setRights(e.target.checked);}}/><span>出典・ライセンス・個人情報を確認した</span></label>
-    <div className="publish-actions"><button className="secondary-button" onClick={()=>save(false)} disabled={busy}>{published?'非公開で保存':'下書き保存'}</button><button className="button" onClick={()=>save(true)} disabled={busy||!rights}>{busy?'保存中…':published?'公開内容を更新':'公開する'}</button></div>
+    <div className="publish-actions"><button className="button" onClick={()=>save(false)} disabled={busy}>{published?'非公開で保存':'下書き保存'}</button><button className="secondary-button" onClick={()=>save(true)} disabled={busy||!rights}>{busy?'保存中…':published?'公開内容を更新':'公開する'}</button></div>
     <p className="publication-guidance">公開した記事だけ、誰でも読めます。非公開に戻しても、他者が保存したコピーは取り消せません。</p>
    </section>
    {message&&<p className="notice" role="status" aria-live="polite">{message}</p>}

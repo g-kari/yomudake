@@ -7,7 +7,7 @@
  --green: #176b73;
  --accent: #f2e39b;
  --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
- font-family: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", Meiryo, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+ font-family: "Hiragino Sans", "Noto Sans JP", "Noto Sans CJK JP", "Yu Gothic", Meiryo, "IPAGothic", "IPAexGothic", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
  font-size: 16px;
 }
 * { box-sizing: border-box; }
@@ -49,7 +49,7 @@ input { min-width: 0; padding: 11px 14px; }
 .new-button:hover:not(:disabled) { background: #12575e; }
 .draft-list { display: flex; flex-direction: column; }
 .draft-row { position: relative; display: flex; align-items: flex-start; gap: 9px; padding: 20px 16px; border: 0; border-bottom: 1px solid #e8edf2; text-align: left; border-radius: 0; font-size: 15px; line-height: 1.65; background: #fff; }
-.draft-row.selected { background: var(--paper); font-weight: 650; }
+.draft-row.selected, .draft-row.selected:hover:not(:disabled) { background: var(--paper); font-weight: 650; }
 .draft-row.selected::before { content: ""; position: absolute; inset: 12px auto 12px 0; width: 4px; background: #d8bd49; }
 .draft-row small { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; font-weight: 400; }
 .draft-row > span:last-child { min-width: 0; overflow-wrap: anywhere; }
