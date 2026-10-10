@@ -33,3 +33,33 @@ test('HTTP handler with the real signature guard rejects other users before inge
  assert.deepEqual((await (await server.fetch(request('/api/articles','GET',undefined,false,ownerHeaders),env)).json()).articles,[]);
  assert.equal((await server.fetch(request('/api/convert','POST',{url:'https://article.example/'},false,ownerHeaders),env)).status,200);assert.equal(conversions,1);
 });
+
+test('HTML downloads prohibit intermediary transformations without changing content or other routes',async()=>{
+ const env={DB:database()};
+ assert.equal((await worker.fetch(request('/api/articles','POST',{...data,published:true},true),env)).status,200);
+ const page=await worker.fetch(request('/p/'+data.id),env),download=await worker.fetch(request('/export/'+data.id+'?format=html'),env);
+ assert.equal(download.status,200);assert.equal(download.headers.get('cache-control'),'no-store, no-transform');
+ assert.equal(download.headers.get('content-type'),'text/html; charset=utf-8');
+ assert.equal(download.headers.get('content-disposition'),`attachment; filename="article-${data.id}.html"`);
+ for(const name of ['content-security-policy','x-content-type-options','referrer-policy'])assert.equal(download.headers.get(name),page.headers.get(name));
+ assert.equal(await download.text(),await page.text());
+ const markdown=await worker.fetch(request('/export/'+data.id+'?format=md'),env);
+ assert.equal(markdown.headers.get('cache-control'),'no-store');assert.equal(markdown.headers.get('content-type'),'text/markdown; charset=utf-8');
+ assert.equal(markdown.headers.get('content-disposition'),`attachment; filename="article-${data.id}.md"`);assert.equal(await markdown.text(),data.markdown);
+ for(const [path,authorized,status] of [['/',false,200],['/p/'+data.id,false,200],['/admin',true,200],['/api/articles',true,200],['/admin',false,401],['/api/articles',false,401]]){
+  const result=await worker.fetch(request(path,'GET',undefined,authorized),env);assert.equal(result.status,status,path);
+  assert.equal(result.headers.get('cache-control'),'no-store',path);
+ }
+});
+test('only successful public HTML attachments receive no-transform, including the built-in sample',async()=>{
+ const env={DB:database()};await worker.fetch(request('/api/articles','POST',data,true),env);
+ for(const id of [data.id,'synthetic-missing']){
+  const result=await worker.fetch(request('/export/'+id+'?format=html'),env);assert.equal(result.status,404);
+  assert.equal(result.headers.get('cache-control'),'no-store');assert.equal(result.headers.get('content-disposition'),null);
+ }
+ const sample=await worker.fetch(request('/export/sample-safe-reading?format=html'),env);
+ assert.equal(sample.status,200);assert.equal(sample.headers.get('cache-control'),'no-store, no-transform');
+ assert.equal(sample.headers.get('content-disposition'),'attachment; filename="article-sample-safe-reading.html"');
+ const markdown=await worker.fetch(request('/export/sample-safe-reading'),env);
+ assert.equal(markdown.status,200);assert.equal(markdown.headers.get('cache-control'),'no-store');
+});

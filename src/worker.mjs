@@ -28,7 +28,7 @@ export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}
   if(match&&request.method==='GET'){
    const a=await getArticle(env,match[2],true);if(!a)return html('<main class="signin"><h1>公開されていない記事です</h1><a href="/">公開記事へ</a></main>',404);
    if(match[1]==='p')return html(articleHtml(a));
-   const isHtml=url.searchParams.get('format')==='html';const result=isHtml?html(articleHtml(a)):new Response(a.markdown,{headers:{...headers,'Content-Type':'text/markdown; charset=utf-8'}});result.headers.set('Content-Disposition',`attachment; filename="article-${a.id}.${isHtml?'html':'md'}"`);return result;
+   const isHtml=url.searchParams.get('format')==='html';const result=isHtml?html(articleHtml(a)):new Response(a.markdown,{headers:{...headers,'Content-Type':'text/markdown; charset=utf-8'}});if(isHtml)result.headers.set('Cache-Control','no-store, no-transform');result.headers.set('Content-Disposition',`attachment; filename="article-${a.id}.${isHtml?'html':'md'}"`);return result;
   }
   if(path.startsWith('/api/')||path==='/admin')return json({error:'この操作には対応していません。'},405);
   if(request.method!=='GET'&&request.method!=='HEAD')return json({error:'読取専用です。'},405);
