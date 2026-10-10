@@ -23,7 +23,7 @@ function inline(text:string, options:LinkOptions, depth=0):React.ReactNode[] {
 }
 export function Markdown({text,...options}:{text:string}&LinkOptions) {
  const lines=text.replace(/\r\n?/g,'\n').split('\n'); const nodes:React.ReactNode[]=[];
- let i=0;
+ let i=0; let headingIndex=0;
  while(i<lines.length) {
   const line=lines[i]; const key=i;
   if(!line.trim()) {i++;continue;}
@@ -34,7 +34,7 @@ export function Markdown({text,...options}:{text:string}&LinkOptions) {
    nodes.push(<pre key={key}><code data-language={language}>{code.join('\n')}</code></pre>);continue;
   }
   const heading=/^(#{1,6})\s+(.+)$/.exec(line);
-  if(heading) { const tag=`h${heading[1].length}`;nodes.push(React.createElement(tag,{key},inline(heading[2],options)));i++;continue;}
+  if(heading) { const tag=`h${heading[1].length}`;nodes.push(React.createElement(tag,{key,id:`yomu-section-${++headingIndex}`,tabIndex:-1},inline(heading[2],options)));i++;continue;}
   if(/^\s*([-*_])\1\1+\s*$/.test(line)) {nodes.push(<hr key={key}/>);i++;continue;}
   if(/^\s*>/.test(line)) {const content:string[]=[];while(i<lines.length && /^\s*>/.test(lines[i]))content.push(lines[i++].replace(/^\s*>\s?/,''));nodes.push(<blockquote key={key}>{inline(content.join('\n'),options)}</blockquote>);continue;}
   if(/^\s*([-+*]|\d+\.)\s+/.test(line)) {
