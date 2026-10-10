@@ -14,7 +14,7 @@
     "dev": "wrangler dev --config wrangler.local.jsonc --local",
     "deploy": "node scripts/require-config.mjs && npm run build && wrangler deploy --config wrangler.jsonc",
     "typecheck": "tsc --noEmit",
-    "test:browser": "node tests/browser/notebook.mjs && node tests/browser/list-recovery.mjs"
+    "test:browser": "node tests/browser/notebook.mjs && node tests/browser/list-recovery.mjs && node tests/browser/article-outline.mjs"
   },
   "dependencies": {
     "jose": "6.2.12",

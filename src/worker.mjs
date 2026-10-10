@@ -1,7 +1,7 @@
 import {verifyOwnerRequest} from './access.mjs';
 import {listArticles,getArticle,saveArticle} from './storage.mjs';
 import {sample} from './sample';
-import {markdownToHtml,markdownExternalLinks} from './export-html';
+import {markdownToHtmlWithOutline,markdownExternalLinks} from './export-html';
 import {articleLink,articleRevision,confirmationUrl,exportMarkdown} from './navigation.mjs';
 import {isSameOriginMutation,validateArticleInput} from './security.mjs';
 import {readBounded,IngestError} from './fetch-html.mjs';
@@ -16,7 +16,9 @@ async function articleHtml(a,origin){
  const revision=await articleRevision(a);
  const source=articleLink(a.source_url,origin);
  const sourceHref=source?.external?confirmationUrl(origin,a,'source',revision):source?.href;
- return `<main class="reading-page"><header class="topbar">${brand}<span class="read-only">公開 / 閲覧専用</span></header><article class="reading"><div class="article-meta"><span>${a.id===sample.id?'サンプル / CC0':'公開記事'}</span><span>作成 ${escape(a.created_at.slice(0,10))} UTC</span></div><h1 class="article-title">${escape(a.title)}</h1><div class="article-source">${source?`出典・元の記事 <a href="${escape(sourceHref)}">${escape(source.href)}</a>`:'このサイトで作成した本文'}</div><div class="prose">${markdownToHtml(a.markdown,{origin,externalHref:(_,index)=>confirmationUrl(origin,a,`link-${index}`,revision)})}</div><div class="reading-end"><a href="/export/${escape(a.id)}?format=md" download>Markdownを保存 ↓</a><a href="/export/${escape(a.id)}?format=html" download>HTMLを保存 ↓</a></div></article><footer class="site-footer">外部画像は読み込みません。外部サイトへのリンクは、移動先の確認画面を表示します。</footer></main>`;
+ const rendered=markdownToHtmlWithOutline(a.markdown,{origin,externalHref:(_,index)=>confirmationUrl(origin,a,`link-${index}`,revision)});
+ const outline=rendered.outline.length>=2?`<details class="article-outline" open><summary>目次</summary><nav aria-label="記事の目次"><ol>${rendered.outline.map(h=>`<li class="outline-level-${h.level}"><a href="#${h.id}">${escape(h.label)}</a></li>`).join('')}</ol></nav></details>`:'';
+ return `<main class="reading-page"><header class="topbar">${brand}<span class="read-only">公開 / 閲覧専用</span></header><article class="reading"><div class="article-meta"><span>${a.id===sample.id?'サンプル / CC0':'公開記事'}</span><span>作成 ${escape(a.created_at.slice(0,10))} UTC</span></div><h1 class="article-title">${escape(a.title)}</h1><div class="article-source">${source?`出典・元の記事 <a href="${escape(sourceHref)}">${escape(source.href)}</a>`:'このサイトで作成した本文'}</div>${outline}<div class="prose">${rendered.html}</div><div class="reading-end"><a href="/export/${escape(a.id)}?format=md" download>Markdownを保存 ↓</a><a href="/export/${escape(a.id)}?format=html" download>HTMLを保存 ↓</a></div></article><footer class="site-footer">外部画像は読み込みません。外部サイトへのリンクは、移動先の確認画面を表示します。</footer></main>`;
 }
 function outboundHtml(destination,a,origin,revision){
  const host=new URL(destination).hostname;
