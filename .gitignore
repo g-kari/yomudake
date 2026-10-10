@@ -4,7 +4,6 @@ dist/
 .sites-runtime/
 .env*
 .dev.vars*
-wrangler.jsonc
 wrangler.local.jsonc
 worker-configuration.d.ts
 *.log

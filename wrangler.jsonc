@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "yomudake",
+  "main": "dist/worker.js",
+  "compatibility_date": "2026-10-09",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "yomudake.0g0.xyz", "custom_domain": true }],
+  "assets": { "directory": "public", "binding": "ASSETS", "run_worker_first": true },
+  "d1_databases": [{ "binding": "DB", "database_name": "yomudake-articles", "database_id": "7136ec87-5145-41a6-9ee6-01385312a650", "migrations_dir": "migrations" }],
+  "ai": { "binding": "AI" },
+  "vars": { "ACCESS_TEAM_DOMAIN": "https://0g0.cloudflareaccess.com", "ACCESS_AUD": "394a1beb5fab41e60c8256e394f35582e6115907064c1dc129c9ab40fe05a6bf" },
+  "limits": { "cpu_ms": 10 },
+  "observability": { "enabled": true, "head_sampling_rate": 0.1 }
+}
