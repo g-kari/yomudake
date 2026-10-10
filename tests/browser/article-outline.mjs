@@ -182,13 +182,27 @@ async function assertOutline(page) {
   assert.equal(await page.locator('.prose script, .prose iframe, .prose img, .prose form').count(), 0);
 }
 
-async function assertFragment(page, id, expectedBase = publicUrl, focused = false) {
+async function assertFragment(page, id, expectedBase = publicUrl, focused = false, restoredScrollY = null) {
   await page.waitForURL(`${expectedBase}#${id}`);
   const target = page.locator(`[id="${id}"]`);
   assert.equal(await target.count(), 1);
-  const bounds = await target.boundingBox();
-  assert.ok(bounds && bounds.y < page.viewportSize().height && bounds.y + bounds.height > 0,
-    `${id}: fragment target is outside the viewport: ${JSON.stringify(bounds)}`);
+  // Native history restores the user's last scroll position in an entry. That
+  // may be the TOC they scrolled back to, rather than the entry's heading.
+  // New activation/deep links still must bring their actual target into view.
+  if (restoredScrollY === null) {
+    await page.waitForFunction(({id, focused}) => {
+      const element = document.getElementById(id);
+      if (!element) return false;
+      const bounds = element.getBoundingClientRect();
+      return bounds.top < innerHeight && bounds.bottom > 0 && (!focused || element === document.activeElement);
+    }, {id, focused}, {timeout: 10000});
+    const bounds = await target.boundingBox();
+    assert.ok(bounds && bounds.y < page.viewportSize().height && bounds.y + bounds.height > 0,
+      `${id}: fragment target is outside the viewport: ${JSON.stringify(bounds)}`);
+  } else {
+    await page.waitForFunction(expected => Math.abs(scrollY - expected) <= 2, restoredScrollY, {timeout: 10000});
+    assert.ok(Math.abs(await page.evaluate(() => scrollY) - restoredScrollY) <= 2, 'Native history restores the last reading position');
+  }
   if (focused) assert.equal(await target.evaluate(element => element === document.activeElement), true, 'Native fragment navigation focuses the non-tabbable heading');
   assert.equal(new URL(page.url()).pathname, new URL(expectedBase).pathname);
   assert.equal(await page.getByRole('heading', {name: '外部サイトです', exact: true}).count(), 0);
@@ -299,15 +313,21 @@ try {
   const requestsBeforeHistory = requests.length;
   await navigation.getByRole('link').nth(1).click();
   await assertFragment(page, ids[1], publicUrl, true);
+  // A reader scrolls back to the TOC to choose the next section. Preserve that
+  // real prior-entry position in history instead of requiring a new anchor jump.
+  await navigation.getByRole('link').nth(4).scrollIntoViewIfNeeded();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  const beforeNextFragment = await page.evaluate(() => scrollY);
   await navigation.getByRole('link').nth(4).click();
   await assertFragment(page, ids[4], publicUrl, true);
+  const beforeBack = await page.evaluate(() => scrollY);
   await page.goBack();
-  await assertFragment(page, ids[1]);
+  await assertFragment(page, ids[1], publicUrl, false, beforeNextFragment);
   await page.goForward();
-  await assertFragment(page, ids[4]);
+  await assertFragment(page, ids[4], publicUrl, false, beforeBack);
   assert.equal(requests.length, requestsBeforeHistory, 'Fragment click/back/forward stays within the existing document');
   await screenshot(page, 'fragment-history-390.png');
-  results.push({name: 'duplicate heading fragments, direct URL, reload, back and forward resolve deterministically without JavaScript or requests', ok: true});
+  results.push({name: 'duplicate heading direct links and reload jump to their targets; native back/forward restores the saved reading position without JavaScript or requests', ok: true});
 
   currentScenario = 'single or absent headings have no redundant outline';
   for (const [article, count] of [[articles[1], 1], [articles[2], 0]]) {
