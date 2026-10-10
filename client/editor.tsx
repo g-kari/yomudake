@@ -7,24 +7,46 @@ import {sample} from '../src/sample';
 import {articleLink} from '../src/navigation.mjs';
 import {ExternalWarning,type PendingLink} from './external-warning';
 type Article={id:string;title:string;source_url:string;markdown:string;published:number;created_at:string;updated_at:string;published_at:string|null};
+function isArticle(value:unknown):value is Article{
+ if(!value||typeof value!=='object'||Array.isArray(value))return false;
+ const article=value as Record<string,unknown>;
+ return typeof article.id==='string'&&article.id.length>0&&typeof article.title==='string'&&typeof article.source_url==='string'&&typeof article.markdown==='string'&&(article.published===0||article.published===1)&&typeof article.created_at==='string'&&typeof article.updated_at==='string'&&(article.published_at===null||typeof article.published_at==='string');
+}
 export default function Editor({signOutPath}:{signOutPath:string}) {
  const [articles,setArticles]=useState<Article[]>([]),[id,setId]=useState(''),[title,setTitle]=useState(sample.title),[markdown,setMarkdown]=useState(sample.markdown),[sourceUrl,setSourceUrl]=useState('');
+ const [listPending,setListPending]=useState(true),[listLoaded,setListLoaded]=useState(false),[listError,setListError]=useState('');
  const [dirty,setDirty]=useState(false);
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
  const draftVersion=useRef(0),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
+ const mounted=useRef(false),listRequest=useRef<{version:number}|null>(null),listElement=useRef<HTMLElement|null>(null);
  function draftChanged(){
   draftVersion.current++;
   const pending=conversion.current;
   if(pending){conversion.current=null;pending.controller.abort();setBusy(false);}
  }
- useEffect(()=>()=>{draftVersion.current++;listVersion.current++;conversion.current?.controller.abort();conversion.current=null;saving.current=null;},[]);
+ useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;draftVersion.current++;listVersion.current++;conversion.current?.controller.abort();conversion.current=null;saving.current=null;listRequest.current=null;};},[]);
  async function load(active:()=>boolean){
   const version=++listVersion.current;
-  try{const r=await fetch('/api/articles',{cache:'no-store'});const data=await r.json() as ApiReply;if(!active()||version!==listVersion.current)return;if(!r.ok)throw new Error(data.error||'記事を読み込めません。');setArticles(data.articles||[]);}
-  catch(e){if(active()&&version===listVersion.current)throw e;}
+  const pending={version};listRequest.current=pending;setListPending(true);
+  const isCurrent=()=>mounted.current&&active()&&version===listVersion.current;
+  try{
+   const r=await fetch('/api/articles',{cache:'no-store'});const raw:unknown=await r.json();
+   if(!isCurrent())return false;
+   if(!r.ok||!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('Article list unavailable');
+   const records=(raw as Record<string,unknown>).articles;
+   if(!Array.isArray(records)||!records.every(isArticle)||new Set(records.map(a=>a.id)).size!==records.length)throw new Error('Article list unavailable');
+   setArticles(records);setListLoaded(true);setListError('');return true;
+  }catch(e){if(isCurrent()){setListError('記事一覧を読み込めませんでした。編集中の内容は残っています。');throw e;}}
+  finally{if(isCurrent()&&listRequest.current===pending){listRequest.current=null;setListPending(false);}}
  }
- useEffect(()=>{let active=true;const version=listVersion.current+1;load(()=>active).catch(()=>{if(active&&version===listVersion.current&&!saving.current)setMessage('記事を読み込めませんでした。再読み込みしてください。');});return ()=>{active=false;};},[]);
+ useEffect(()=>{let active=true;load(()=>active).catch(()=>{});return ()=>{active=false;};},[]);
+ async function retryList(trigger:HTMLButtonElement){
+  if(!mounted.current||listRequest.current||saving.current)return;
+  const restoreFocus=document.activeElement===trigger,version=listVersion.current+1;
+  const succeeded=await load(()=>mounted.current).catch(()=>false);
+  if(succeeded&&mounted.current&&version===listVersion.current&&restoreFocus&&(document.activeElement===trigger||document.activeElement===document.body))listElement.current?.focus();
+ }
  useEffect(()=>{function warn(e:BeforeUnloadEvent){if(dirty){e.preventDefault();e.returnValue='';}}window.addEventListener('beforeunload',warn);return ()=>window.removeEventListener('beforeunload',warn);},[dirty]);
  function mayLeave(){return !dirty||window.confirm('保存していない変更があります。破棄して記事を切り替えますか？');}
  function createNew(){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId('');setTitle('');setMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
@@ -49,7 +71,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
    if(draftVersion.current===pending.version)setDirty(false);
    setPublished(makePublic);setShareUrl(makePublic?`${window.location.origin}${data.url}`:'');setMessage(savedMessage());
    try{await load(active);if(active())setMessage(savedMessage());}
-   catch{if(active())setMessage(`${savedMessage()} 記事一覧の再読み込みに失敗しました。ページを再読み込みして一覧を確認してください。`);}
+   catch{if(active())setMessage(`${savedMessage()} 記事一覧の状態は一覧欄で確認できます。`);}
   }catch(e){if(active())setMessage(e instanceof Error?e.message:'保存できませんでした。本文は残っています。');}
   finally{if(active()){saving.current=null;setBusy(false);}}
  }
@@ -95,11 +117,13 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   </section>
   <aside className="sidebar" aria-label="記事の一覧">
    <div className="sidebar-heading"><h1>記事</h1><button className="new-button" onClick={createNew} disabled={busy}>＋ 新しい下書き</button></div>
-   <nav className="draft-list" aria-label="保存した記事">
+   {listPending&&<p className="list-feedback" role="status">記事一覧を読み込んでいます…</p>}
+   {listError&&<div className="list-feedback list-error" role="alert"><p>{listError}</p><button className="secondary-button" type="button" onClick={e=>retryList(e.currentTarget)} disabled={listPending||busy}>記事一覧を再読み込み</button></div>}
+   <nav className="draft-list" aria-label="保存した記事" aria-busy={listPending} tabIndex={-1} ref={listElement}>
     {articles.length?articles.map(a=><button key={a.id} className={`draft-row ${id===a.id?'selected':''}`} aria-current={id===a.id?'true':undefined} onClick={()=>openArticle(a)} disabled={busy}>
      <span className={`status-dot ${a.published?'live':''}`} aria-hidden="true"/>
      <span>{a.title}<small>{a.published?'公開中':'下書き'} · {a.updated_at.slice(0,10)}</small></span>
-    </button>):<p className="empty-list">保存した記事はここに並びます。新しい下書きから始められます。</p>}
+    </button>):listLoaded&&!listPending&&!listError?<p className="empty-list">保存した記事はここに並びます。新しい下書きから始められます。</p>:null}
    </nav>
    <div className="sidebar-footer"><a href="/" target="_blank" rel="noopener noreferrer">公開ページを開く ↗</a><a href={signOutPath} target="_top">サインアウト</a></div>
   </aside>
