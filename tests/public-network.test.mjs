@@ -21,9 +21,16 @@ test('canonical URL checks deny encoded/numeric IPs, labels, controls, private n
 test('fixed Cloudflare resolver checks both families and supports A-only, AAAA-only and CNAME chains',async()=>{
  const calls=[];const delegate=dnsFetcher((type,host)=>[answer(host,5,'cdn.example.'),...(type===1?[answer('cdn.example',1,public4)]:[])]);
  const addresses=await assertPublicDns('article.example',{fetcher:async(url,options)=>{calls.push({url,options});return delegate(url);}});assert.deepEqual(addresses,[public4]);assert.equal(calls.length,2);
- for(const call of calls){assert.equal(new URL(call.url).origin,'https://cloudflare-dns.com');assert.equal(new URL(call.url).pathname,'/dns-query');assert.equal(call.options.redirect,'error');assert.deepEqual(call.options.headers,{Accept:'application/dns-json'});assert.equal(call.options.method,'GET');}
+ for(const call of calls){assert.equal(new URL(call.url).origin,'https://cloudflare-dns.com');assert.equal(new URL(call.url).pathname,'/dns-query');assert.equal(call.options.redirect,'manual');assert.deepEqual(call.options.headers,{Accept:'application/dns-json'});assert.equal(call.options.method,'GET');}
  assert.deepEqual(await assertPublicDns('article.example',{fetcher:dnsFetcher((type,host)=>type===28?[answer(host,28,public6)]:[])}),[public6]);
  assert.deepEqual(await assertPublicDns('article.example',{fetcher:dnsFetcher((type,host)=>[answer(host,5,'cdn.example.'),...(type===28?[answer('cdn.example',28,public6)]:[])])}),[public6]);
+});
+test('DNS Question matches the exact hostname with zero or one final root dot only',async()=>{
+ for(const name of ['article.example','article.example.','ARTICLE.EXAMPLE.'])assert.deepEqual(await assertPublicDns('article.example',{fetcher:async value=>{const type=Number(new URL(value).searchParams.get('type'));return Response.json({Status:0,TC:false,Question:[{name,type}],Answer:type===1?[answer('article.example',1,public4)]:[]});}}),[public4]);
+ for(const name of ['article.example..','sub.article.example.','article.example.attacker.example.','article.example.\n','localhost.',''])await assert.rejects(assertPublicDns('article.example',{fetcher:async value=>Response.json({Status:0,TC:false,Question:[{name,type:Number(new URL(value).searchParams.get('type'))}],Answer:[answer('article.example',1,public4)]})}),error=>error.status===422);
+});
+test('every resolver redirect is rejected without following or attempting article fetch',async()=>{
+ for(const status of [301,302,303,307,308]){const calls=[];let cancelled=0;await assert.rejects(fetchPublicHtml('https://article.example/',{fetcher:async(value,options)=>{calls.push({value,options});return new Response(new ReadableStream({cancel(){cancelled++;}}),{status,headers:{location:'https://127.0.0.1/dns-query'}});}}),error=>error.status===502);assert.equal(calls.length,2);assert.equal(cancelled,2);assert.ok(calls.every(call=>new URL(call.value).origin==='https://cloudflare-dns.com'&&call.options.redirect==='manual'));}
 });
 test('DNS preflight rejects mixed private answers, wrong families, unrelated records and bad CNAME chains',async()=>{
  const cases=[

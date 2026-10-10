@@ -19,7 +19,7 @@ Cloudflareのhosted Workers security modelは、outbound HTTPをproxyが仲介�
 
 1. Access JWT署名・issuer・AUD・期限・signed ownerを検証してから処理を始める
 2. URLは2048文字以内。HTTPS/443、正規DNS hostnameだけ。認証情報、IPリテラル、encoded authority、内部名、自サイト、既知のsecret query名は拒否
-3. 固定 `https://cloudflare-dns.com/dns-query` にAとAAAAを照会。redirect禁止、32KB以内。両方NOERROR、truncationなし、Question一致を要求
+3. 固定 `https://cloudflare-dns.com/dns-query` にAとAAAAを照会。Workersが対応する `redirect: 'manual'` を使い、全転送応答を失敗として止める。32KB以内、両方NOERROR、truncationなし、Questionの正確なhostnameとquery type一致を要求。hostname末尾のルートdotは0個か1個だけを同一視し、異なるhostname・複数dot・余分なQuestionは拒否
 4. CNAMEの関連付けを辿り、loop・不明な終点・内部名・無関係なanswerを拒否。全回答のIPを保守的なIANA special-purpose policyで検査し、少なくとも1つの関連公開IPが必要
 5. 新規GETを固定Accept/User-Agentのみで取得。redirectは3回まで、毎回URLとDNSを再検査。同じhostnameへのredirectも再照会
 6. DNS、redirect、body readerを含む総取得10秒、読込後のHTML 1MB。既知のサイズ超過や拒否のbodyはcancel

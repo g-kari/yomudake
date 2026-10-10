@@ -22,6 +22,8 @@ Xなど、ログイン・ブラウザー描画が必要なページの本文を�
 
 DNS確認・取得元との通信・Markdown変換サービスの例外を区別し、固定のエラーメッセージと診断コードを返します。上流の例外文、Cookie、トークン、記事本文は応答に含めません。この区別だけで取得元のアクセス制限や変換サービスの障害が解消したことにはなりません。
 
+公開DNS照会はWorkersのnative fetchに対応した `redirect: 'manual'` で実行し、転送応答は拒否します。DNSのQuestionは取得先の正確なホスト名と照合し、末尾のルートdotの有無だけを同一視します。Nodeのmockだけでなく、固定版workerdの合成ネットワークでもDNS照会・転送拒否・非公開IP拒否を検証します。これだけで実X投稿の本文取得・変換成功を確認したことにはなりません。
+
 ## 構成
 
 - Cloudflare Worker: 公開記事の読取と所有者限定API
@@ -40,7 +42,7 @@ Node.js 24以上を使用します。
 2. `npm run check`（管理UIの型チェック、合成データのテスト、本番ビルド）
 3. 必要なら `npm run types` でWranglerから環境の型を生成
 
-テストは合成記事・合成RSA鍵・SQLite・模擬AI bindingで実行します。実際のCloudflareアカウントに変更を加えず、外部記事を転載しません。
+テストは合成記事・合成RSA鍵・SQLite・模擬AI bindingで実行します。固定版Miniflare/workerdのnative fetch試験も、外向き通信を合成handlerへ閉じ込め、実際のCloudflareアカウント・DNS・AIへ接続しません。外部記事を転載しません。
 
 画面の検証は `npm run build` の後、`npx --no-install playwright install --with-deps chromium` と `npm run test:browser` を実行します。固定版 Playwright の Chromium で、320/390/768/1440px、単一本文表示、キーボード、未保存の破棄確認、変換・連続保存・公開を確認します。API はループバック上の合成記事とメモリー内 SQLite だけを使用し、本番 Access・AI・D1 には接続しません。結果と架空データのスクリーンショットは `.sites-runtime/browser/` に保存します。既存 CI の同じジョブで実行し、成果物の保持は3日です。
 

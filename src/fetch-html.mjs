@@ -27,10 +27,11 @@ export async function readBounded(response,maxBytes,signal) {
 export async function assertPublicDns(host,{fetcher=fetch,signal}={}) {
  const replies=await Promise.all([1,28].map(async type=>{
   const query=new URL('https://cloudflare-dns.com/dns-query');query.searchParams.set('name',host);query.searchParams.set('type',String(type));
-  const response=await withAbort(fetcher(query.href,{method:'GET',redirect:'error',headers:{Accept:'application/dns-json'},signal}),signal);
+  // Workers rejects redirect:'error' before I/O. Manual keeps resolver redirects unfollowed.
+  const response=await withAbort(fetcher(query.href,{method:'GET',redirect:'manual',headers:{Accept:'application/dns-json'},signal}),signal);
   if(!response.ok){await response.body?.cancel();throw new IngestError('公開DNSの確認に失敗しました。',502);}
   let data;try{data=JSON.parse(new TextDecoder().decode(await readBounded(response,32768,signal)));}catch(error){if(signal?.aborted)throw error;throw new IngestError('公開DNSの応答が不正です。',502);}
-  if(data?.Status!==0||data.TC!==false||!Array.isArray(data.Question)||data.Question.length!==1||typeof data.Question[0]?.name!=='string'||data.Question[0].name.toLowerCase()!==host+'.'||data.Question[0].type!==type||data.Answer!==undefined&&!Array.isArray(data.Answer)||data.Answer?.length>64)throw new IngestError('公開DNSを確認できませんでした。',422);
+  if(data?.Status!==0||data.TC!==false||!Array.isArray(data.Question)||data.Question.length!==1||typeof data.Question[0]?.name!=='string'||data.Question[0].name.toLowerCase().replace(/\.$/,'')!==host||data.Question[0].type!==type||data.Answer!==undefined&&!Array.isArray(data.Answer)||data.Answer?.length>64)throw new IngestError('公開DNSを確認できませんでした。',422);
   const aliases=new Map(),records=new Map(),owners=new Set();
   for(const record of data.Answer||[]){
    const owner=typeof record?.name==='string'?record.name.toLowerCase().replace(/\.$/,''):'';if(!publicHostname(owner))throw new IngestError('公開DNSの応答が不正です。',502);owners.add(owner);
