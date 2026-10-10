@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
+import {setTimeout as delay} from 'node:timers/promises';
 import {chromium} from 'playwright';
 import {ready, close} from './fixture-server.mjs';
 
@@ -182,6 +183,16 @@ async function assertOutline(page) {
   assert.equal(await page.locator('.prose script, .prose iframe, .prose img, .prose form').count(), 0);
 }
 
+async function waitForNativeState(page, condition, value, message) {
+  const deadline = Date.now() + 10000;
+  // JavaScript-disabled documents do not reliably run page-side RAF callbacks.
+  // Poll sync DOM observations from Node; never enable script in the article.
+  while (!(await page.evaluate(condition, value))) {
+    assert.ok(Date.now() < deadline, message);
+    await delay(50);
+  }
+}
+
 async function assertFragment(page, id, expectedBase = publicUrl, focused = false, restoredScrollY = null) {
   await page.waitForURL(`${expectedBase}#${id}`);
   const target = page.locator(`[id="${id}"]`);
@@ -190,17 +201,17 @@ async function assertFragment(page, id, expectedBase = publicUrl, focused = fals
   // may be the TOC they scrolled back to, rather than the entry's heading.
   // New activation/deep links still must bring their actual target into view.
   if (restoredScrollY === null) {
-    await page.waitForFunction(({id, focused}) => {
+    await waitForNativeState(page, ({id, focused}) => {
       const element = document.getElementById(id);
       if (!element) return false;
       const bounds = element.getBoundingClientRect();
       return bounds.top < innerHeight && bounds.bottom > 0 && (!focused || element === document.activeElement);
-    }, {id, focused}, {timeout: 10000});
+    }, {id, focused}, `${id}: native fragment target must become visible and focused`);
     const bounds = await target.boundingBox();
     assert.ok(bounds && bounds.y < page.viewportSize().height && bounds.y + bounds.height > 0,
       `${id}: fragment target is outside the viewport: ${JSON.stringify(bounds)}`);
   } else {
-    await page.waitForFunction(expected => Math.abs(scrollY - expected) <= 2, restoredScrollY, {timeout: 10000});
+    await waitForNativeState(page, expected => Math.abs(scrollY - expected) <= 2, restoredScrollY, 'Native history must restore the saved reading position');
     assert.ok(Math.abs(await page.evaluate(() => scrollY) - restoredScrollY) <= 2, 'Native history restores the last reading position');
   }
   if (focused) assert.equal(await target.evaluate(element => element === document.activeElement), true, 'Native fragment navigation focuses the non-tabbable heading');
@@ -316,7 +327,6 @@ try {
   // A reader scrolls back to the TOC to choose the next section. Preserve that
   // real prior-entry position in history instead of requiring a new anchor jump.
   await navigation.getByRole('link').nth(4).scrollIntoViewIfNeeded();
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
   const beforeNextFragment = await page.evaluate(() => scrollY);
   await navigation.getByRole('link').nth(4).click();
   await assertFragment(page, ids[4], publicUrl, true);
