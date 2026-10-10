@@ -1,5 +1,6 @@
 import {publicHostname,publicIpAddress} from './public-network.mjs';
-export class IngestError extends Error {constructor(message,status=400){super(message);this.status=status;}}
+const ERROR_CODES=new Set(['SOURCE_DNS_ERROR','SOURCE_CONNECTION_ERROR','CONVERSION_BINDING_MISSING','CONVERSION_SERVICE_ERROR','CONVERSION_RESULT_ERROR']);
+export class IngestError extends Error {constructor(message,status=400,code){super(message);this.status=status;if(ERROR_CODES.has(code))this.code=code;}}
 const REDIRECTS=new Set([301,302,303,307,308]);
 export function allowedUrl(value,ownHost='') {
  if(typeof value!=='string'||value.length>2048)throw new IngestError('URLは2048文字以内で入力してください。');
@@ -47,13 +48,13 @@ export async function assertPublicDns(host,{fetcher=fetch,signal}={}) {
  const addresses=replies.flat();if(!addresses.length)throw new IngestError('公開IPを確認できませんでした。',422);return addresses;
 }
 export async function fetchPublicHtml(value,{ownHost='',fetcher=fetch,resolveHostname=assertPublicDns,maxBytes=1000000,timeoutMs=10000,maxRedirects=3}={}) {
- let url=allowedUrl(value,ownHost);const seen=new Set();const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);
+ let url=allowedUrl(value,ownHost);const seen=new Set();const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),timeoutMs);let stage='dns';
  try {
   for(let hop=0;;hop++){
    if(seen.has(url.href))throw new IngestError('転送がループしています。');seen.add(url.href);
-   const addresses=await withAbort(resolveHostname(url.hostname,{fetcher,signal:controller.signal}),controller.signal);
+   stage='dns';const addresses=await withAbort(resolveHostname(url.hostname,{fetcher,signal:controller.signal}),controller.signal);
    if(!Array.isArray(addresses)||!addresses.length||addresses.some(address=>!publicIpAddress(address)))throw new IngestError('公開IPを確認できませんでした。',422);
-   const response=await withAbort(fetcher(url.href,{method:'GET',redirect:'manual',headers:{Accept:'text/html, application/xhtml+xml;q=0.9','User-Agent':'Yomudake/1.0'},signal:controller.signal}),controller.signal);
+   stage='source';const response=await withAbort(fetcher(url.href,{method:'GET',redirect:'manual',headers:{Accept:'text/html, application/xhtml+xml;q=0.9','User-Agent':'Yomudake/1.0'},signal:controller.signal}),controller.signal);
    if(REDIRECTS.has(response.status)){
     const location=response.headers.get('location');await response.body?.cancel();
     if(!location||hop>=maxRedirects)throw new IngestError('転送回数の上限を超えたか、転送先が不正です。');
@@ -70,5 +71,10 @@ export async function fetchPublicHtml(value,{ownHost='',fetcher=fetch,resolveHos
    let body;try{body=new TextDecoder(declared||meta||'utf-8').decode(bytes);}catch{throw new IngestError('この記事の文字コードには対応していません。',415);}
    return {html:body,sourceUrl:url.href};
   }
- }catch(error){if(controller.signal.aborted)throw new IngestError('取得がタイムアウトしました。',504);throw error;}finally{clearTimeout(timer);controller.abort();}
+ }catch(error){
+  if(controller.signal.aborted)throw new IngestError('取得がタイムアウトしました。',504);
+  if(error instanceof IngestError)throw error;
+  if(stage==='dns')throw new IngestError('公開DNSの確認中に通信が失敗しました。入力は残っています。時間を置いて再試行してください。',502,'SOURCE_DNS_ERROR');
+  throw new IngestError('取得元との通信に失敗しました。ログインやブラウザー描画が必要なページは、この変換では取得できません。元ページを確認するか、本文を直接編集してください。',502,'SOURCE_CONNECTION_ERROR');
+ }finally{clearTimeout(timer);controller.abort();}
 }

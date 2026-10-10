@@ -52,6 +52,13 @@ const tests=[
  ['network failure preserves the current draft',async()=>{
   await newDraft();const before=snapshot();await click('URLから変換');await fail(0,'Synthetic network failure');equal(snapshot(),before,'Network failure altered draft');check(element('.notice').textContent==='Synthetic network failure','Network failure message missing');
  }],
+ ['classified source and AI failures preserve the complete draft without automatic retries',async()=>{
+  await newDraft();await act(async()=>{rights().click();});const before=snapshot();
+  for(const [index,code] of ['SOURCE_CONNECTION_ERROR','CONVERSION_SERVICE_ERROR'].entries()){
+   await click('URLから変換');await finish(index,{error:'合成の取得・変換障害。本文を直接編集できます。',code},502);
+   equal(snapshot(),before,'Classified failure altered draft');check(element('.notice').textContent==='合成の取得・変換障害。本文を直接編集できます。','Classified failure missing');check(requests.length===index+1,'Failure automatically retried');check(!url().disabled,'Classified failure left editor locked');
+  }
+ }],
  ['malformed successful response cannot erase a draft',async()=>{
   await newDraft();const before=snapshot();await click('URLから変換');await finish(0,{title:'Missing Markdown'});equal(snapshot(),before,'Malformed response erased draft');check(element('.notice').textContent.includes('本文は残っています'),'Malformed result not explained');
  }],
@@ -108,7 +115,7 @@ test('actual owner Editor interaction handlers protect drafts with synthetic API
   await window.editorTestDone;
   const report=JSON.parse(window.document.querySelector('#result').textContent);
   assert.ok(!report.fatal,report.fatal);
-  assert.equal(report.results.length,17,'Incomplete editor coverage');
+  assert.equal(report.results.length,18,'Incomplete editor coverage');
   for(const result of report.results)await t.test(result.name,()=>assert.equal(result.ok,true,result.error));
  }finally{
   await window.happyDOM.close();

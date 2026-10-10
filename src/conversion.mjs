@@ -30,16 +30,16 @@ export function restoreLinks(markdown,links) {
  return markdown.replace(/\]\((?:https:\/\/yomudake\.invalid\/?)?#yomudake-link-(\d+)\)/g,(whole,n)=>links[Number(n)]?`](${links[Number(n)]})`:whole);
 }
 export async function convertUrl(value,env,{ownHost='',fetcher=fetch,resolveHostname,conversionTimeoutMs=30000}={}) {
- if(!env.AI?.toMarkdown)throw new IngestError('Cloudflareの変換機能が未接続です。',503);
+ if(typeof env.AI?.toMarkdown!=='function')throw new IngestError('Cloudflareの変換機能が未接続です。',503,'CONVERSION_BINDING_MISSING');
  const raw=await fetchPublicHtml(value,{ownHost,fetcher,resolveHostname});
  const sanitized=sanitizeConversionInput(raw.html,raw.sourceUrl);
  if(new TextEncoder().encode(sanitized.html).byteLength>1000000)throw new IngestError('変換用HTMLが1MBを超えています。',413);
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),conversionTimeoutMs);let result;
  try{result=await withAbort(env.AI.toMarkdown({name:'page.html',blob:new Blob([sanitized.html],{type:'text/html'})},{conversionOptions:{output:{format:'markdown'},html:{hostname:'https://yomudake.invalid',cssSelector:'body'}}}),controller.signal);}
- catch(error){if(controller.signal.aborted)throw new IngestError('Markdown変換の待機がタイムアウトしました。本文は残っています。',504);throw error;}
+ catch(error){if(controller.signal.aborted)throw new IngestError('Markdown変換の待機がタイムアウトしました。本文は残っています。',504);throw new IngestError('CloudflareのMarkdown変換サービスで処理に失敗しました。入力は残っています。時間を置いて再試行してください。',502,'CONVERSION_SERVICE_ERROR');}
  finally{clearTimeout(timer);}
  const first=Array.isArray(result)?result[0]:result;
- if(!first||first.format==='error'||typeof first.data!=='string')throw new IngestError('Markdown変換が完了しませんでした。',502);
+ if(!first||first.format==='error'||typeof first.data!=='string')throw new IngestError('Markdown変換が完了しませんでした。',502,'CONVERSION_RESULT_ERROR');
  const markdown=restoreLinks(first.data,sanitized.links);
  if(new TextEncoder().encode(markdown).byteLength>200000)throw new IngestError('変換後の本文が200KBを超えています。',413);
  return {markdown,sourceUrl:raw.sourceUrl,title:sanitized.title||'変換した記事',convertedAt:new Date().toISOString()};
