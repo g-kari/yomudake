@@ -13,7 +13,8 @@
     "types": "wrangler types --config wrangler.example.jsonc",
     "dev": "wrangler dev --config wrangler.local.jsonc --local",
     "deploy": "node scripts/require-config.mjs && npm run build && wrangler deploy --config wrangler.jsonc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:browser": "node tests/browser/notebook.mjs"
   },
   "dependencies": {
     "jose": "6.2.12",
@@ -23,11 +24,12 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20261009.1",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "esbuild": "0.28.2",
     "happy-dom": "20.9.0",
-    "wrangler": "4.149.0",
+    "playwright": "1.62.1",
     "typescript": "5.9.3",
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3"
+    "wrangler": "4.149.0"
   }
 }
