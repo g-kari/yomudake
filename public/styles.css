@@ -48,6 +48,9 @@ input { min-width: 0; padding: 11px 14px; }
 .new-button { color: #fff; background: var(--green); border-color: var(--green); font-size: 14px; }
 .new-button:hover:not(:disabled) { background: #12575e; }
 .draft-list { display: flex; flex-direction: column; }
+.list-feedback { margin: 0; padding: 0 16px; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; color: var(--muted); }
+.list-error p { margin: 0 0 10px; }
+.list-error button { width: 100%; padding-inline: 8px; font-size: 13px; }
 .draft-row { position: relative; display: flex; align-items: flex-start; gap: 9px; padding: 20px 16px; border: 0; border-bottom: 1px solid #e8edf2; text-align: left; border-radius: 0; font-size: 15px; line-height: 1.65; background: #fff; }
 .draft-row.selected, .draft-row.selected:hover:not(:disabled) { background: var(--paper); font-weight: 650; }
 .draft-row.selected::before { content: ""; position: absolute; inset: 12px auto 12px 0; width: 4px; background: #d8bd49; }
