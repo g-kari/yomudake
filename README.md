@@ -6,7 +6,8 @@ URLをMarkdownに変換し、本文だけを読みやすいHTMLとして公開�
 
 - 所有者だけの管理画面: 記事URLの変換、Markdown編集、下書き保存、公開・非公開切替
 - 公開済み記事はログインなしで閲覧。下書きと管理APIは公開しない
-- 元URL・作成日を表示し、Markdown/HTMLで書き出し
+- 出典の元URL・作成日を表示し、Markdown/HTMLで書き出し
+- 外部リンクを開く前に、移動先のサイト名とURLを確認
 - 本文のHTML、スクリプト、フォーム、iframe、外部画像は実行・読込しない
 
 ## 現在の状態
@@ -72,7 +73,7 @@ Node.js 24以上を使用します。
 
 DNSを先に確認するだけでは、接続先IPを固定できません。DNSの再解決で確認した公開IPと実接続先が変わり得ます。内部到達の最後の境界は、Cloudflare hosted Workersのmediated public Internet fetchとstrictly-public設定に依存します。ローカルNode/Miniflareや独自workerdのネットワーク設定に同じ保証はありません。詳しくは [URL取得の設計](docs/url-ingestion.md) を参照してください。
 
-Markdownの書き出しは元のMarkdownを保持します。別のMarkdownビューアーではHTMLや画像の扱いが異なる場合があります。
+Markdownの書き出しは本文をそのまま保持し、元URLのある記事には出典リンクと外部リンクの注意書きを先頭に追加します。Markdownビューアーの外部リンクには、このサイトの確認画面を強制できません。HTMLの外部リンクは公開記事の確認画面へ移動します。記事を更新・非公開にした後は古いHTMLのリンクを止め、記事を開き直す案内を表示します。別のMarkdownビューアーではHTMLや画像の扱いが異なる場合があります。
 
 公開前に著作権・ライセンス・個人情報を確認してください。非公開に戻しても、他者が保存したコピーは取り消せません。
 
@@ -84,3 +85,9 @@ Markdownの書き出しは元のMarkdownを保持します。別のMarkdownビ�
 - [Access JWT validation](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)
 - [Hosted Workers security model](https://developers.cloudflare.com/workers/reference/security-model/#api-design)
 - [Public-only global fetch](https://developers.cloudflare.com/workers/configuration/compatibility-flags/#global-fetch-strictly-public)
+
+## 外部リンクの確認画面
+
+公開記事の外部リンクは、移動先のサイト名とURLを表示してから開きます。管理画面では下書きを保つdialogで確認します。公開確認画面だけに、指定されたPixiv作品の公式iframeをsandbox付きで表示します。記事・管理画面・HTML書き出し自体にはiframeを読み込まず、既存の管理認証・本文の安全な表示を保ちます。
+
+Pixivの作品本体をこのサイトへコピーしません。確認画面を開いたときはPixivへ接続するため、IPや既存Cookieが届く場合があります。Refererは送りません。作品・作者へのリンクは表示の成否にかかわらず残し、外部リンク先と同じ確認を通します。関連作品の確認済みリストは現在1件だけです。詳しくは [更新記録](docs/release-notes.md) を参照してください。

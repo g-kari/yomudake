@@ -4,11 +4,13 @@ const Link=({children,...props}:React.AnchorHTMLAttributes<HTMLAnchorElement>)=>
 type ApiReply={error?:string;articles?:Article[];url?:string;id?:string;published?:boolean;markdown?:string;sourceUrl?:string;title?:string};
 import {Markdown} from '../src/markdown';
 import {sample} from '../src/sample';
-import {safeHttpUrl} from '../src/security.mjs';
+import {articleLink} from '../src/navigation.mjs';
+import {ExternalWarning,type PendingLink} from './external-warning';
 type Article={id:string;title:string;source_url:string;markdown:string;published:number;created_at:string;updated_at:string;published_at:string|null};
 export default function Editor({signOutPath}:{signOutPath:string}) {
  const [articles,setArticles]=useState<Article[]>([]),[id,setId]=useState(''),[title,setTitle]=useState(sample.title),[markdown,setMarkdown]=useState(sample.markdown),[sourceUrl,setSourceUrl]=useState('');
  const [dirty,setDirty]=useState(false);
+ const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
  const draftVersion=useRef(0),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
  function draftChanged(){
@@ -25,8 +27,8 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  useEffect(()=>{let active=true;const version=listVersion.current+1;load(()=>active).catch(()=>{if(active&&version===listVersion.current&&!saving.current)setMessage('記事を読み込めませんでした。再読み込みしてください。');});return ()=>{active=false;};},[]);
  useEffect(()=>{function warn(e:BeforeUnloadEvent){if(dirty){e.preventDefault();e.returnValue='';}}window.addEventListener('beforeunload',warn);return ()=>window.removeEventListener('beforeunload',warn);},[dirty]);
  function mayLeave(){return !dirty||window.confirm('保存していない変更があります。破棄して記事を切り替えますか？');}
- function createNew(){if(saving.current||!mayLeave())return;draftChanged();setDirty(false);setId('');setTitle('');setMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
- function openArticle(a:Article){if(saving.current||!mayLeave())return;draftChanged();setDirty(false);setId(a.id);setTitle(a.title);setMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
+ function createNew(){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId('');setTitle('');setMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
+ function openArticle(a:Article){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setTitle(a.title);setMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
  async function save(makePublic:boolean){
   if(busy||saving.current||conversion.current)return;
   if(makePublic&&!rights){setMessage('本文・出典・ライセンスを確認し、公開確認にチェックしてください。');return;}
@@ -73,7 +75,9 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  }
  async function copyUrl(){try{await navigator.clipboard.writeText(shareUrl);setMessage('共有URLをコピーしました。');}catch{setMessage('コピーできませんでした。表示されたURLを選択してコピーしてください。');}}
  const selectedArticle=articles.find(a=>a.id===id);
- const sourceLink=safeHttpUrl(sourceUrl);
+ const origin=window.location.origin;
+ const sourceLink=articleLink(sourceUrl,origin);
+ const externalLink=(href:string,label:string,key?:number)=><button key={key} type="button" className="external-link" onClick={e=>setPendingLink({href,trigger:e.currentTarget})}>{label}</button>;
  return <main className="workspace">
   <a className="skip-link" href="#editor-page">本文へ移動</a>
   <header className="editor-top">
@@ -106,7 +110,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
      <span className={`document-status ${published?'is-public':''}`}>{published?'公開中':'下書き'}</span>
     </div>
     <div className="document-meta">
-     <span className="document-source">{sourceLink?<a href={sourceLink} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer">{sourceUrl} ↗</a>:sourceUrl?'元URLを確認してください':'このサイトで作成した本文'}</span>
+     <span className="document-source">{sourceLink?<>出典・元の記事 {sourceLink.external?externalLink(sourceLink.href,sourceLink.href):<a href={sourceLink.href}>{sourceLink.href}</a>}</>:sourceUrl?'元URLを確認してください':'このサイトで作成した本文'}</span>
      {selectedArticle&&<span>作成 {selectedArticle.created_at.slice(0,10)} UTC</span>}
     </div>
     <div className="tab-bar" aria-label="記事の表示">
@@ -120,7 +124,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
       <textarea disabled={busy} name="markdown" id="markdown-body" spellCheck={false} value={markdown} onChange={e=>{draftChanged();setMarkdown(e.target.value);setDirty(true);}} placeholder={'# 見出し\n\nここにMarkdownを貼り付けてください。'} aria-label="Markdown本文"/>
      </div>
      <div id="preview-panel" className="preview-pane" hidden={tab!=='preview'} aria-label="本文のプレビュー">
-      {markdown?<Markdown text={markdown}/>:<p className="preview-empty">本文のプレビューがここに表示されます。Markdownを入力するか、URLから変換してください。</p>}
+      {markdown?<Markdown text={markdown} origin={origin} renderExternal={externalLink}/>:<p className="preview-empty">本文のプレビューがここに表示されます。Markdownを入力するか、URLから変換してください。</p>}
      </div>
     </div>
    </section>
@@ -133,5 +137,6 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
    {shareUrl&&<div className="share-box"><label htmlFor="share-url">公開URL</label><input id="share-url" readOnly value={shareUrl}/><button className="secondary-button" onClick={copyUrl}>コピー</button><a href={shareUrl} target="_blank" rel="noopener noreferrer">開く ↗</a></div>}
    <p className="editor-footnote">HTML・スクリプト・フォームは本文として扱います。外部画像は読み込みません。Markdownの入力は公開するまで下書きです。</p>
   </section>
+  <ExternalWarning pending={pendingLink} onClose={()=>setPendingLink(null)}/>
  </main>;
 }

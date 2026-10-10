@@ -10,6 +10,14 @@ const results=[];
 try {
  browser=await chromium.launch({headless:true});
  const page=await browser.newPage({viewport:{width:1440,height:1100}});
+ let blockEmbed=false;const outgoing=[];
+ await page.context().route('**/*',async route=>{
+  const url=new URL(route.request().url());
+  if(url.hostname==='127.0.0.1')return route.continue();
+  outgoing.push(url.href);
+  if(url.hostname==='embed.pixiv.net')return blockEmbed?route.abort('failed'):route.fulfill({contentType:'text/html',body:'<!doctype html><html lang="ja"><meta charset="utf-8"><body><p>合成の埋め込み表示。実作品の画像検証ではありません。</p></body></html>'});
+  return route.abort('blockedbyclient');
+ });
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('http://127.0.0.1:4179/admin');
  await page.getByRole('button',{name:/余白をつくる、小さな習慣/}).click();
@@ -38,8 +46,28 @@ try {
  await page.getByRole('button',{name:'下書き保存',exact:true}).evaluate(b=>{b.click();b.click();});await page.getByRole('status').filter({hasText:'下書きに保存しました'}).waitFor();assert.equal(postCount,1);
  await page.locator('.rights-check input').check();await page.getByRole('button',{name:'公開する',exact:true}).click();await page.getByRole('status').filter({hasText:'公開しました'}).waitFor();
  assert.equal(await page.locator('.document-status').textContent(),'公開中');assert.equal(await page.getByRole('button',{name:'非公開で保存',exact:true}).isEnabled(),true);
- const publicUrl=await page.locator('#share-url').inputValue();await page.goto(publicUrl);assert.ok((await page.locator('.prose').textContent()).includes('変換した架空記事'));assert.equal(await page.locator('script').count(),0);
+ await page.getByRole('button',{name:'Markdown',exact:true}).click();await page.locator('#markdown-body').fill('# 未保存の架空本文\n\n[架空の参考リンク](https://example.org/reference) [サイト内の記事](/p/sample-safe-reading)');await page.getByRole('button',{name:'プレビュー',exact:true}).click();
+ const draftBefore=await page.evaluate(()=>({title:document.querySelector('input[name="title"]').value,body:document.querySelector('#markdown-body').value,source:document.querySelector('#source-url').value,rights:document.querySelector('.rights-check input').checked,status:document.querySelector('.document-status').textContent}));
+ const sourceButton=page.locator('.document-source button');assert.equal(await sourceButton.getAttribute('href'),null);
+ await sourceButton.click();const dialog=page.getByRole('dialog');await dialog.waitFor({state:'visible'});
+ assert.ok((await dialog.textContent()).includes('https://example.org/new'));assert.equal(await dialog.locator('iframe').count(),0);assert.equal(await dialog.getByRole('link',{name:'外部サイトへ進む'}).getAttribute('href'),'https://example.org/new');
+ await page.screenshot({path:out+'editor-external-warning.png',fullPage:true});
+ await dialog.getByRole('button',{name:'戻る',exact:true}).click();await dialog.waitFor({state:'hidden'});assert.equal(await sourceButton.evaluate(el=>el===document.activeElement),true);
+ await sourceButton.click();await dialog.waitFor({state:'visible'});await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});assert.equal(await sourceButton.evaluate(el=>el===document.activeElement),true);
+ const bodyButton=page.getByRole('button',{name:'架空の参考リンク',exact:true});await bodyButton.focus();await page.keyboard.press('Enter');await dialog.waitFor({state:'visible'});assert.equal(await dialog.getByRole('link',{name:'外部サイトへ進む'}).getAttribute('href'),'https://example.org/reference');await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});assert.equal(await bodyButton.evaluate(el=>el===document.activeElement),true);
+ assert.deepEqual(await page.evaluate(()=>({title:document.querySelector('input[name="title"]').value,body:document.querySelector('#markdown-body').value,source:document.querySelector('#source-url').value,rights:document.querySelector('.rights-check input').checked,status:document.querySelector('.document-status').textContent})),draftBefore);assert.equal(postCount,2);
+ results.push({name:'editor source/body confirmation Cancel and Escape restore focus and preserve complete draft with no API writes',ok:true});
+ const publicUrl=await page.locator('#share-url').inputValue();page.once('dialog',d=>d.accept());await page.goto(publicUrl);assert.ok((await page.locator('.prose').textContent()).includes('変換した架空記事'));assert.equal(await page.locator('script').count(),0);
  await page.screenshot({path:out+'public-reading.png',fullPage:true});
+ const sourceHref=await page.locator('.article-source a').getAttribute('href');assert.equal(new URL(sourceHref).pathname.startsWith('/out/'),true);assert.deepEqual([...new URL(sourceHref).searchParams.keys()],['rev']);
+ await page.locator('.article-source a').click();await page.getByRole('heading',{name:'外部サイトです',exact:true}).waitFor();assert.equal(await page.locator('script').count(),0);assert.equal(await page.getByRole('link',{name:'外部サイトへ進む'}).getAttribute('href'),'https://example.org/new');assert.equal(await page.locator('iframe').getAttribute('sandbox'),'');assert.equal(await page.locator('iframe').getAttribute('referrerpolicy'),'no-referrer');
+ assert.equal(await page.getByRole('link',{name:'やばいこれ毒かも！',exact:true}).isVisible(),true);assert.equal(await page.getByRole('link',{name:'ジセイノク',exact:true}).isVisible(),true);
+ for(const width of [320,390,1440]){await page.setViewportSize({width,height:1000});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:out+`public-warning-${width}.png`,fullPage:true});}
+ await page.getByRole('link',{name:'戻る',exact:true}).focus();await page.keyboard.press('Tab');assert.equal(await page.getByRole('link',{name:'外部サイトへ進む'}).evaluate(el=>el===document.activeElement),true);
+ await page.goBack();assert.equal(await page.locator('.article-source a').isVisible(),true);await page.goForward();assert.equal(await page.getByRole('heading',{name:'外部サイトです',exact:true}).isVisible(),true);
+ await page.getByRole('link',{name:'戻る',exact:true}).click();await page.getByRole('link',{name:'架空の参考リンク',exact:true}).click();assert.equal(await page.getByRole('link',{name:'外部サイトへ進む'}).getAttribute('href'),'https://example.org/reference');
+ blockEmbed=true;await page.reload();assert.equal(await page.getByRole('link',{name:'やばいこれ毒かも！',exact:true}).isVisible(),true);assert.ok((await page.locator('figcaption').textContent()).includes('表示されない場合'));await page.screenshot({path:out+'public-warning-unavailable-embed.png',fullPage:true});
+ assert.ok(outgoing.every(url=>new URL(url).hostname==='embed.pixiv.net'));results.push({name:'public revision-bound source/body warning, fixed sandboxed synthetic embed, mobile/keyboard/history and unavailable-embed attribution fallback without target navigation',ok:true});
  await page.goto('http://127.0.0.1:4179/');await page.setViewportSize({width:390,height:900});await page.screenshot({path:out+'public-home-mobile.png',fullPage:true});
  results.push({name:'real Chromium tab/edit/cancel/new/convert/repeated save/publish/public-reading flows with isolated synthetic backend',ok:true});
  assert.deepEqual(errors,[]);results.push({name:'no browser page errors',ok:true});
