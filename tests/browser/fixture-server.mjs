@@ -13,7 +13,7 @@ for(const [i,[id,title,markdown]] of articles.entries())db.prepare('INSERT INTO 
 function prepare(sql,args=[]){return {bind(...a){return prepare(sql,a)},async all(){return {success:true,results:db.prepare(sql).all(...args)}},async first(){return db.prepare(sql).get(...args)||null},async run(){db.prepare(sql).run(...args);return {success:true}}};}
 const env={DB:{prepare},ASSETS:{async fetch(req){const path=new URL(req.url).pathname;const types={'.css':'text/css','.js':'application/javascript','.svg':'image/svg+xml'};return new Response(readFileSync(new URL('public'+path,root)),{headers:{'Content-Type':types[path.slice(path.lastIndexOf('.'))]||'application/octet-stream'}});}}};
 // Isolated loopback fixture. It has no production credentials, AI calls or D1 connection.
-const worker=createWorker({verifyOwner:async()=>({ok:true,status:200}),convert:async url=>({title:'変換した架空記事',sourceUrl:url,markdown:'# 変換した架空記事\n\nこれはブラウザー検証用の合成本文です。'})});
+const worker=createWorker({verifyOwner:async()=>({ok:true,status:200}),convert:async url=>({title:'変換した架空記事',sourceUrl:url,markdown:'# 変換した架空記事\n\nこれはブラウザー検証用の合成本文です。\n\n[架空の参考リンク](https://example.org/reference) [サイト内の記事](/p/sample-safe-reading)'})});
 export const server=http.createServer(async(req,res)=>{try{
  const body=[];for await(const chunk of req)body.push(chunk);
  const request=new Request('http://127.0.0.1:4179'+req.url,{method:req.method,headers:req.headers,...(body.length?{body:Buffer.concat(body)}:{})});
