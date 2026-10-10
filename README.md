@@ -11,7 +11,7 @@ URLをMarkdownに変換し、本文だけを読みやすいHTMLとして公開�
 
 ## 現在の状態
 
-Cloudflare Workersへ直接デプロイするコードとテストです。本番Worker、D1、AI binding、管理用Accessアプリはまだ設定・デプロイしていません。実URL変換と本番ログインは未検証です。
+Cloudflare Workersへ直接デプロイするコードとテストです。リポジトリの `wrangler.jsonc` は本番向け設定（Workers Builds から `npx wrangler deploy` 用）です。実URL変換と本番ログインは未検証です。
 
 一般の公開HTTPS URLを、サイトごとの許可リストなしで取得するコードです。取得前と各転送先でCloudflareの公開DNSを確認し、非公開・特殊用途のIPを拒否します。本番のネットワーク境界と実際の変換はまだ検証していません。
 
@@ -41,13 +41,14 @@ Node.js 24以上を使用します。
 
 実行前に、デプロイ先と新規リソース、管理用のAccessポリシー、利用料金・上限を確認します。
 
-1. 新しいWorkerと専用D1を準備し、`migrations/0001_articles.sql` を適用
-2. `wrangler.example.jsonc` をローカルの `wrangler.jsonc` にコピーし、実際のD1 IDと承認した独自ホスト名のrouteを設定
-3. AI bindingを接続
-4. 1つの管理用Accessアプリで `/admin` と `/api/*` の両方を保護し、同じAUDを使用。許可する所有者は1人だけ。公開記事ルート `/p/*` はAccessで囲わない
-5. 実行環境に `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`、`OWNER_EMAIL` を設定。メールや認証情報をリポジトリへ書き込まない
-6. `global_fetch_strictly_public` を維持し、VPC・内部サービス・Browser Run・proxyのbindingを追加しない。configはJSON構文のまま設定し、`npm run deploy` のpreflightを通す
-7. 匿名・別ユーザー・偽造JWTの拒否と、所有者の編集を本番で検証してから運用
+1. 専用D1 `yomudake-articles` と Worker ルートは `wrangler.jsonc` に記載済み。`migrations/0001_articles.sql` は本番 D1 に手動適用済み。**Workers Builds / `wrangler deploy` はマイグレーションを実行しません。** `wrangler d1 migrations apply` を使う場合は、先に `d1_migrations` に `0001` 行を挿入しないと二重適用になる可能性があります。
+2. AI bindingは `wrangler.jsonc` の `ai` binding で接続
+3. 1つの管理用Accessアプリで `/admin` と `/api/*` の両方を保護し、同じAUDを使用。許可する所有者は1人だけ。公開記事ルート `/p/*` はAccessで囲わない
+4. `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` は `wrangler.jsonc` の `vars`。`OWNER_EMAIL` は Worker **secret**（`wrangler secret put OWNER_EMAIL` など）で別途設定し、リポジトリに書かない
+5. `global_fetch_strictly_public` を維持し、VPC・内部サービス・Browser Run・proxyのbindingを追加しない。`npm run deploy` または CI の `npx wrangler deploy` 前に `node scripts/require-config.mjs` の preflight を通す
+6. 匿名・別ユーザー・偽造JWTの拒否と、所有者の編集を本番で検証してから運用
+
+ローカルだけ別設定にする場合は `wrangler.example.jsonc` を `wrangler.local.jsonc` にコピーして `npm run dev` を使います（`wrangler.local.jsonc` は gitignore 済み）。
 
 テンプレートのCPU上限は10msです。これは利用料金の上限ではありません。Worker/D1/AIはそれぞれ無料枠と課金条件があり、全体が無料と確認したものではありません。
 
