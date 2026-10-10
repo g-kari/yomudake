@@ -37,6 +37,8 @@ Node.js 24以上を使用します。
 
 テストは合成記事・合成RSA鍵・SQLite・模擬AI bindingで実行します。実際のCloudflareアカウントに変更を加えず、外部記事を転載しません。
 
+画面の検証は `npm run build` の後、`npx --no-install playwright install --with-deps chromium` と `npm run test:browser` を実行します。固定版 Playwright の Chromium で、320/390/768/1440px、単一本文表示、キーボード、未保存の破棄確認、変換・連続保存・公開を確認します。API はループバック上の合成記事とメモリー内 SQLite だけを使用し、本番 Access・AI・D1 には接続しません。結果と架空データのスクリーンショットは `.sites-runtime/browser/` に保存します。既存 CI の同じジョブで実行し、成果物の保持は3日です。
+
 ## 本番セットアップ
 
 実行前に、デプロイ先と新規リソース、管理用のAccessポリシー、利用料金・上限を確認します。

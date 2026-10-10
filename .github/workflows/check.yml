@@ -8,6 +8,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -16,3 +17,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      - name: Install pinned test browser
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Check notebook desktop and mobile
+        run: npm run test:browser
+      - name: Retain synthetic notebook screenshots
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: notebook-browser-${{ github.sha }}
+          path: .sites-runtime/browser/
+          # This path contains only synthetic screenshots and result JSON.
+          include-hidden-files: true
+          retention-days: 3
+          if-no-files-found: ignore

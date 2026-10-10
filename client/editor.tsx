@@ -4,11 +4,12 @@ const Link=({children,...props}:React.AnchorHTMLAttributes<HTMLAnchorElement>)=>
 type ApiReply={error?:string;articles?:Article[];url?:string;id?:string;published?:boolean;markdown?:string;sourceUrl?:string;title?:string};
 import {Markdown} from '../src/markdown';
 import {sample} from '../src/sample';
+import {safeHttpUrl} from '../src/security.mjs';
 type Article={id:string;title:string;source_url:string;markdown:string;published:number;created_at:string;updated_at:string;published_at:string|null};
 export default function Editor({signOutPath}:{signOutPath:string}) {
  const [articles,setArticles]=useState<Article[]>([]),[id,setId]=useState(''),[title,setTitle]=useState(sample.title),[markdown,setMarkdown]=useState(sample.markdown),[sourceUrl,setSourceUrl]=useState('');
  const [dirty,setDirty]=useState(false);
- const [tab,setTab]=useState<'edit'|'preview'>('edit'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
+ const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
  const draftVersion=useRef(0),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
  function draftChanged(){
   draftVersion.current++;
@@ -25,7 +26,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  useEffect(()=>{function warn(e:BeforeUnloadEvent){if(dirty){e.preventDefault();e.returnValue='';}}window.addEventListener('beforeunload',warn);return ()=>window.removeEventListener('beforeunload',warn);},[dirty]);
  function mayLeave(){return !dirty||window.confirm('保存していない変更があります。破棄して記事を切り替えますか？');}
  function createNew(){if(saving.current||!mayLeave())return;draftChanged();setDirty(false);setId('');setTitle('');setMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
- function openArticle(a:Article){if(saving.current||!mayLeave())return;draftChanged();setDirty(false);setId(a.id);setTitle(a.title);setMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('edit');}
+ function openArticle(a:Article){if(saving.current||!mayLeave())return;draftChanged();setDirty(false);setId(a.id);setTitle(a.title);setMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
  async function save(makePublic:boolean){
   if(busy||saving.current||conversion.current)return;
   if(makePublic&&!rights){setMessage('本文・出典・ライセンスを確認し、公開確認にチェックしてください。');return;}
@@ -71,5 +72,66 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   finally{if(conversion.current===pending){conversion.current=null;setBusy(false);}}
  }
  async function copyUrl(){try{await navigator.clipboard.writeText(shareUrl);setMessage('共有URLをコピーしました。');}catch{setMessage('コピーできませんでした。表示されたURLを選択してコピーしてください。');}}
- return <main className="workspace"><aside className="sidebar"><Link className="brand" href="/"><span className="brand-mark">読</span> よむだけ</Link><div className="sidebar-heading"><span>記事</span><button className="new-button" onClick={createNew} disabled={busy}>＋ 新規</button></div><nav className="draft-list" aria-label="保存した記事">{articles.length?articles.map(a=><button key={a.id} className={`draft-row ${id===a.id?'selected':''}`} onClick={()=>openArticle(a)} disabled={busy}><span className={`status-dot ${a.published?'live':''}`}/><span>{a.title}<small>{a.published?'公開中':'下書き'} · {a.updated_at.slice(0,10)}</small></span></button>):<p className="empty-list">保存した記事はここに並びます。</p>}</nav><div className="sidebar-footer"><a href="/" target="_blank" rel="noopener noreferrer">公開ページを開く ↗</a><a href={signOutPath} target="_top">サインアウト</a></div></aside><section className="editor-main"><header className="editor-top"><div><span className="eyebrow">PRIVATE WORKSPACE</span><h1>本文を整えて、公開する。</h1></div><span className="private-badge">所有者専用</span></header><section className="conversion-panel" aria-labelledby="conversion-label"><div className="panel-label"><label id="conversion-label" htmlFor="source-url">元URL</label><span className="pending-badge">URL → Markdown</span></div><div className="url-row"><input disabled={busy} id="source-url" type="url" placeholder="https://example.com/article" value={sourceUrl} onChange={e=>{draftChanged();setSourceUrl(e.target.value);setDirty(true);}} maxLength={2048} autoComplete="off"/><button onClick={convert} disabled={busy||!sourceUrl}>{busy?'処理中…':'Markdownに変換 ↗'}</button></div><p>一般の公開HTTPSの記事を取得します。ログイン用・非公開・トークン付きURLは入力しないでください。変換した本文は公開前に確認できます。</p></section><section className="editor-shell"><div className="document-toolbar"><label className="title-label"><span className="sr-only">記事タイトル</span><input disabled={busy} name="title" autoComplete="off" value={title} onChange={e=>{draftChanged();setTitle(e.target.value);setDirty(true);}} placeholder="記事のタイトル" maxLength={160}/></label><span className={`document-status ${published?'is-public':''}`}>{published?'公開中':'下書き'}</span></div><div className="tab-bar" aria-label="記事の表示"><button aria-pressed={tab==='edit'} onClick={()=>setTab('edit')}>Markdown</button><button aria-pressed={tab==='preview'} onClick={()=>setTab('preview')}>プレビュー</button><span>{new TextEncoder().encode(markdown).length.toLocaleString()} / 200,000 bytes</span></div><div className={`writing-surface ${tab}`}><div className="markdown-pane"><label htmlFor="markdown-body" className="pane-label">MARKDOWN</label><textarea disabled={busy} name="markdown" id="markdown-body" spellCheck={false} value={markdown} onChange={e=>{draftChanged();setMarkdown(e.target.value);setDirty(true);}} placeholder={'# 見出し\n\nここにMarkdownを貼り付けてください。'} aria-label="Markdown本文"/></div><div className="preview-pane"><span className="pane-label">READING PREVIEW</span>{markdown?<Markdown text={markdown}/>:<p className="preview-empty">本文のプレビューがここに表示されます。</p>}</div></div></section><section className="publish-bar"><label className="rights-check"><input disabled={busy} type="checkbox" checked={rights} onChange={e=>{draftChanged();setRights(e.target.checked);}}/><span>公開できる本文です。出典・ライセンス・個人情報を確認しました。</span></label><div className="publish-actions"><span>公開する記事だけ、誰でも読めます。</span><button className="secondary-button" onClick={()=>save(false)} disabled={busy}>{published?'非公開で保存':'下書き保存'}</button><button className="button" onClick={()=>save(true)} disabled={busy||!rights}>{busy?'保存中…':published?'公開内容を更新':'本文を公開 ↗'}</button></div></section>{message&&<p className="notice" role="status" aria-live="polite">{message}</p>}{shareUrl&&<div className="share-box"><label htmlFor="share-url">公開URL</label><input id="share-url" readOnly value={shareUrl}/><button className="secondary-button" onClick={copyUrl}>コピー</button><a href={shareUrl} target="_blank" rel="noopener noreferrer">開く ↗</a></div>}<p className="editor-footnote">HTML・スクリプト・フォームは本文として扱います。外部画像は読み込みません。Markdownの入力は公開するまで下書きです。</p></section></main>;
+ const selectedArticle=articles.find(a=>a.id===id);
+ const sourceLink=safeHttpUrl(sourceUrl);
+ return <main className="workspace">
+  <a className="skip-link" href="#editor-page">本文へ移動</a>
+  <header className="editor-top">
+   <Link className="brand" href="/">よむだけ</Link>
+   <p>気になるページを、読みやすいノートに。</p>
+   <span className="private-badge">本人専用</span>
+  </header>
+  <section className="conversion-panel" aria-labelledby="conversion-label">
+   <label id="conversion-label" htmlFor="source-url" className="sr-only">元URL</label>
+   <div className="url-row">
+    <input disabled={busy} id="source-url" name="sourceUrl" spellCheck={false} type="url" placeholder="https://example.com/article" value={sourceUrl} onChange={e=>{draftChanged();setSourceUrl(e.target.value);setDirty(true);}} maxLength={2048} autoComplete="off" aria-describedby="source-guidance"/>
+    <button className="button" onClick={convert} disabled={busy||!sourceUrl}>{busy?'処理中…':'URLから変換'}</button>
+   </div>
+   <p id="source-guidance">一般の公開HTTPSの記事を取得します。ログイン用・非公開・トークン付きURLは入力しないでください。</p>
+  </section>
+  <aside className="sidebar" aria-label="記事の一覧">
+   <div className="sidebar-heading"><h1>記事</h1><button className="new-button" onClick={createNew} disabled={busy}>＋ 新しい下書き</button></div>
+   <nav className="draft-list" aria-label="保存した記事">
+    {articles.length?articles.map(a=><button key={a.id} className={`draft-row ${id===a.id?'selected':''}`} aria-current={id===a.id?'true':undefined} onClick={()=>openArticle(a)} disabled={busy}>
+     <span className={`status-dot ${a.published?'live':''}`} aria-hidden="true"/>
+     <span>{a.title}<small>{a.published?'公開中':'下書き'} · {a.updated_at.slice(0,10)}</small></span>
+    </button>):<p className="empty-list">保存した記事はここに並びます。新しい下書きから始められます。</p>}
+   </nav>
+   <div className="sidebar-footer"><a href="/" target="_blank" rel="noopener noreferrer">公開ページを開く ↗</a><a href={signOutPath} target="_top">サインアウト</a></div>
+  </aside>
+  <section id="editor-page" className="editor-main" aria-label="記事の編集" tabIndex={-1}>
+   <section className="editor-shell">
+    <div className="document-toolbar">
+     <label className="title-label"><span className="sr-only">記事タイトル</span><input disabled={busy} name="title" autoComplete="off" value={title} onChange={e=>{draftChanged();setTitle(e.target.value);setDirty(true);}} placeholder="記事のタイトル" maxLength={160}/></label>
+     <span className={`document-status ${published?'is-public':''}`}>{published?'公開中':'下書き'}</span>
+    </div>
+    <div className="document-meta">
+     <span className="document-source">{sourceLink?<a href={sourceLink} target="_blank" rel="noopener noreferrer nofollow" referrerPolicy="no-referrer">{sourceUrl} ↗</a>:sourceUrl?'元URLを確認してください':'このサイトで作成した本文'}</span>
+     {selectedArticle&&<span>作成 {selectedArticle.created_at.slice(0,10)} UTC</span>}
+    </div>
+    <div className="tab-bar" aria-label="記事の表示">
+     <button aria-pressed={tab==='edit'} aria-controls="markdown-panel" onClick={()=>setTab('edit')}>Markdown</button>
+     <button aria-pressed={tab==='preview'} aria-controls="preview-panel" onClick={()=>setTab('preview')}>プレビュー</button>
+     <span className="byte-count">{new TextEncoder().encode(markdown).length.toLocaleString()} / 200,000 bytes</span>
+    </div>
+    <div className={`writing-surface ${tab}`}>
+     <div id="markdown-panel" className="markdown-pane" hidden={tab!=='edit'}>
+      <label htmlFor="markdown-body" className="sr-only">Markdown本文</label>
+      <textarea disabled={busy} name="markdown" id="markdown-body" spellCheck={false} value={markdown} onChange={e=>{draftChanged();setMarkdown(e.target.value);setDirty(true);}} placeholder={'# 見出し\n\nここにMarkdownを貼り付けてください。'} aria-label="Markdown本文"/>
+     </div>
+     <div id="preview-panel" className="preview-pane" hidden={tab!=='preview'} aria-label="本文のプレビュー">
+      {markdown?<Markdown text={markdown}/>:<p className="preview-empty">本文のプレビューがここに表示されます。Markdownを入力するか、URLから変換してください。</p>}
+     </div>
+    </div>
+   </section>
+   <section className="publish-bar" aria-label="記事の保存と公開">
+    <label className="rights-check"><input disabled={busy} type="checkbox" checked={rights} onChange={e=>{draftChanged();setRights(e.target.checked);}}/><span>出典・ライセンス・個人情報を確認した</span></label>
+    <div className="publish-actions"><button className="button" onClick={()=>save(false)} disabled={busy}>{published?'非公開で保存':'下書き保存'}</button><button className="secondary-button" onClick={()=>save(true)} disabled={busy||!rights}>{busy?'保存中…':published?'公開内容を更新':'公開する'}</button></div>
+    <p className="publication-guidance">公開した記事だけ、誰でも読めます。非公開に戻しても、他者が保存したコピーは取り消せません。</p>
+   </section>
+   {message&&<p className="notice" role="status" aria-live="polite">{message}</p>}
+   {shareUrl&&<div className="share-box"><label htmlFor="share-url">公開URL</label><input id="share-url" readOnly value={shareUrl}/><button className="secondary-button" onClick={copyUrl}>コピー</button><a href={shareUrl} target="_blank" rel="noopener noreferrer">開く ↗</a></div>}
+   <p className="editor-footnote">HTML・スクリプト・フォームは本文として扱います。外部画像は読み込みません。Markdownの入力は公開するまで下書きです。</p>
+  </section>
+ </main>;
 }
