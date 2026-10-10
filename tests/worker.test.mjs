@@ -18,6 +18,37 @@ const request=(path,method='GET',body,authorized=false,extra={})=>new Request(or
 test('server rejects anonymous and unsigned owner claims on protected routes',async()=>{const env={DB:database()};for(const path of ['/admin','/api/articles','/api/convert'])assert.equal((await worker.fetch(request(path),env)).status,401);assert.equal((await worker.fetch(request('/api/articles','POST',data,false,{'oai-authenticated-user-email':'owner@example.com'}),env)).status,401);assert.equal((await worker.fetch(request('/admin','GET',undefined,true),env)).status,200);});
 test('draft/public/export/unpublish state with durable SQLite and inert output',async()=>{const env={DB:database()};assert.equal((await worker.fetch(request('/api/articles','POST',data,true),env)).status,200);assert.equal((await worker.fetch(request('/p/'+data.id),env)).status,404);assert.equal((await worker.fetch(request('/export/'+data.id+'?format=md'),env)).status,404);assert.equal((await worker.fetch(request('/api/articles','POST',{...data,published:true},true),env)).status,200);const page=await worker.fetch(request('/p/'+data.id),env);assert.equal(page.status,200);const text=await page.text();assert.ok(!/<script|<img|<iframe|<form/.test(text));assert.ok(text.includes('&lt;script&gt;'));assert.ok(text.includes(data.sourceUrl));assert.equal(await (await worker.fetch(request('/export/'+data.id+'?format=md'),env)).text(),exportMarkdown({...data,source_url:data.sourceUrl}));assert.equal((await worker.fetch(request('/api/articles','POST',data,true),env)).status,200);assert.equal((await worker.fetch(request('/p/'+data.id),env)).status,404);});
 test('same-Origin JSON mutations, permission denial, safe conversion and no public writes',async()=>{const env={DB:database()};assert.equal((await worker.fetch(request('/api/articles','POST',data,true,{origin:'https://evil.example'}),env)).status,403);assert.equal((await worker.fetch(request('/api/articles','POST',{...data,published:true,rightsConfirmed:false},true),env)).status,400);assert.equal((await worker.fetch(request('/api/convert','POST',{url:'https://article.example/'},true),env)).status,200);assert.equal((await worker.fetch(request('/p/sample-safe-reading','POST',{},true),env)).status,405);assert.equal((await worker.fetch(request('/'),env)).status,200);});
+test('real conversion handler safely distinguishes DNS, source and AI dependency failures',async()=>{
+ const originalFetch=globalThis.fetch,server=createWorker({verifyOwner:owner});
+ const privateError=new Error('private-synthetic-cookie; https://private.example/?token=private-synthetic-token; private article');
+ const payload={url:'https://x.com/synthetic/status/123?s=20'};
+ try{
+  for(const stage of ['dns','source','ai']){
+   let sourceCalls=0,aiCalls=0;
+   globalThis.fetch=async value=>{
+    const url=new URL(value);
+    if(url.hostname==='cloudflare-dns.com'){
+     if(stage==='dns')throw privateError;
+     const host=url.searchParams.get('name'),type=Number(url.searchParams.get('type'));
+     return Response.json({Status:0,TC:false,Question:[{name:host+'.',type}],Answer:type===1?[{name:host+'.',type:1,data:'93.184.215.14'}]:[]});
+    }
+    sourceCalls++;if(stage==='source')throw privateError;
+    return new Response('<p>Synthetic fixture</p>',{headers:{'content-type':'text/html'}});
+   };
+   const env={AI:{async toMarkdown(){aiCalls++;throw privateError;}}};
+   const response=await server.fetch(request('/api/convert','POST',payload,true),env),body=await response.json();
+   assert.equal(response.status,502);
+   assert.equal(body.code,{dns:'SOURCE_DNS_ERROR',source:'SOURCE_CONNECTION_ERROR',ai:'CONVERSION_SERVICE_ERROR'}[stage]);
+   assert.equal(response.headers.get('cache-control'),'no-store');assert.equal(response.headers.get('referrer-policy'),'no-referrer');
+   assert.ok(!JSON.stringify(body).includes('private'));assert.deepEqual(Object.keys(body).sort(),['code','error']);
+   assert.equal(sourceCalls,stage==='dns'?0:1);assert.equal(aiCalls,stage==='ai'?1:0);
+   const before=sourceCalls;
+   assert.equal((await server.fetch(request('/api/convert','POST',payload,false),env)).status,401);
+   assert.equal((await server.fetch(request('/api/convert','POST',payload,true,{origin:'https://evil.example'}),env)).status,403);
+   assert.equal(sourceCalls,before);
+  }
+ }finally{globalThis.fetch=originalFetch;}
+});
 test('HTTP handler with the real signature guard rejects other users before ingestion or storage mutation',async()=>{
  const keys=await generateKeyPair('RS256',{extractable:true});const jwk={...await exportJWK(keys.publicKey),kid:'synthetic-http-key',alg:'RS256'};
  const env={DB:database(),ACCESS_TEAM_DOMAIN:'https://synthetic-http.cloudflareaccess.com',ACCESS_AUD:'synthetic-http-audience',OWNER_EMAIL:'owner@example.test'};

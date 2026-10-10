@@ -61,6 +61,6 @@ export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}
   if(request.method!=='GET'&&request.method!=='HEAD')return json({error:'読取専用です。'},405);
   if(['/styles.css','/editor.js','/favicon.svg'].includes(path)&&env.ASSETS){const asset=await env.ASSETS.fetch(request);const result=new Response(asset.body,asset);result.headers.set('X-Content-Type-Options','nosniff');result.headers.set('Referrer-Policy','no-referrer');return result;}
   return html('<main class="signin"><h1>ページが見つかりません</h1><a href="/">公開記事へ</a></main>',404);
- }catch(error){if(error instanceof IngestError)return json({error:error.message},error.status);return path.startsWith('/api/')?json({error:'処理できませんでした。入力は画面に残っています。時間を置いて再試行してください。'},503):html('<main class="signin"><h1>記事を読み込めませんでした</h1><p>時間を置いて再試行してください。</p></main>',503);}
+ }catch(error){if(error instanceof IngestError)return json({error:error.message,...(error.code?{code:error.code}:{})},error.status);return path.startsWith('/api/')?json({error:'処理できませんでした。入力は画面に残っています。時間を置いて再試行してください。'},503):html('<main class="signin"><h1>記事を読み込めませんでした</h1><p>時間を置いて再試行してください。</p></main>',503);}
 }};}
 export default createWorker();

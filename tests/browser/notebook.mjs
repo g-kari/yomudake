@@ -41,6 +41,24 @@ try {
  await page.screenshot({path:out+'desktop-edited-preview.png',fullPage:true});
  page.once('dialog',d=>d.dismiss());await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();assert.ok((await page.locator('#markdown-body').inputValue()).includes('新しい本文'));
  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();assert.equal(await page.locator('#markdown-body').inputValue(),'');assert.equal(await page.locator('#markdown-panel').isVisible(),true);
+ const failedSource='https://x.com/synthetic/status/123?s=20';
+ const failures=[
+  {code:'SOURCE_CONNECTION_ERROR',error:'取得元との通信に失敗しました。ログインやブラウザー描画が必要なページは、この変換では取得できません。元ページを確認するか、本文を直接編集してください。'},
+  {code:'CONVERSION_SERVICE_ERROR',error:'CloudflareのMarkdown変換サービスで処理に失敗しました。入力は残っています。時間を置いて再試行してください。'}
+ ];
+ await page.locator('input[name="title"]').fill('合成の未保存タイトル');await page.locator('#markdown-body').fill('# 合成の未保存本文\n\n失敗しても残る。');await page.locator('#source-url').fill(failedSource);await page.locator('.rights-check input').check();
+ const snapshot=()=>page.evaluate(()=>({title:document.querySelector('input[name="title"]').value,body:document.querySelector('#markdown-body').value,source:document.querySelector('#source-url').value,rights:document.querySelector('.rights-check input').checked,status:document.querySelector('.document-status').textContent,share:document.querySelector('#share-url')?.value||'',surface:document.querySelector('.writing-surface').className}));
+ const beforeFailure=await snapshot();let failureCalls=0;
+ for(const width of [320,1440])for(const failure of failures){
+  await page.setViewportSize({width,height:1000});
+  const handler=async route=>{assert.equal(route.request().method(),'POST');assert.deepEqual(route.request().postDataJSON(),{url:failedSource});failureCalls++;await route.fulfill({status:502,contentType:'application/json',body:JSON.stringify(failure)});};
+  await page.route('**/api/convert',handler);const beforeCalls=failureCalls;
+  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'URLから変換',exact:true}).click();await page.getByRole('status').filter({hasText:failure.error}).waitFor();
+  assert.deepEqual(await snapshot(),beforeFailure);assert.equal(failureCalls,beforeCalls+1);assert.equal(await page.locator('#source-url').isEnabled(),true);
+  const size=await page.evaluate(()=>({body:document.body.scrollWidth,document:document.documentElement.scrollWidth}));assert.ok(size.body<=width&&size.document<=width,JSON.stringify(size));
+  await page.screenshot({path:out+`conversion-failure-${failure.code}-${width}.png`,fullPage:true});results.push({name:`classified ${failure.code} retains full unsaved draft at ${width}px`,ok:true});await page.unroute('**/api/convert',handler);
+ }
+ await page.setViewportSize({width:1440,height:1100});page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();
  await page.locator('#source-url').fill('https://example.org/new');await page.getByRole('button',{name:'URLから変換',exact:true}).click();await page.getByRole('status').filter({hasText:'Markdownに変換しました'}).waitFor();assert.equal(await page.locator('#preview-panel').isVisible(),true);
  let postCount=0;page.on('request',r=>{if(r.url().endsWith('/api/articles')&&r.method()==='POST')postCount++;});
  await page.getByRole('button',{name:'下書き保存',exact:true}).evaluate(b=>{b.click();b.click();});await page.getByRole('status').filter({hasText:'下書きに保存しました'}).waitFor();assert.equal(postCount,1);
