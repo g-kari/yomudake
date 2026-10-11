@@ -5,10 +5,10 @@
 - `/api/mcp` にstateless Streamable HTTPのJSON応答を追加。2025-11-25/2025-06-18のinitialize・ping・tools/list・tools/callに対応し、batch・旧SSE・最新handshakeなし方式は対象外。
 - URL変換、一件読取、下書き保存、明示的な公開の4ツール。既存公開URL取得のSSRF対策・変換・出典・本文上限を維持し、変換では保存も公開もしません。公開は具体的な本文と公開先へのユーザー許可・権利確認が必要です。
 - 既存Accessの署名・発行者・AUD・期限・所有者確認を毎回使用。任意Bearer tokenやservice tokenを所有者に読み替えません。任意設定のMCP専用AUDは他の管理APIと相互隔離し、新しい認証情報やOAuth grantを作成しません。
-- MCPの各ツールは呼出し制限bindingが未設定・失敗・上限到達なら実行を拒否します。bindingの本番設定は別途確認・承認が必要です。
+- MCPの各ツールは呼出し制限bindingが未設定・失敗・上限到達なら実行を拒否します。所有者の明示承認後、専用namespace58001で6回/60秒の本番binding設定を追加。既存namespaceとの衝突を確認し、固定版workerdで6回成功・7回目拒否を合成通信だけで検証します。
 - 下書きのSQL更新条件で公開済み本文の変更を原子的に拒否。固定IDの読取による結果照合、入力・Origin・通知の制限、秘密を含む例外の非開示を合成RSA/SQLite/変換fixtureで検証。
-- `npm run check` の型チェック・176件の合成テスト・本番buildが成功。ローカルbrowser gateは固定版Chromiumが未配置で、取得が空/破損archiveとなったため未完了。GitHubの既存browser gateで最終commitを再検証します。実OAuth・所有者ログイン・実X本文・実AI・本番D1は未検証です。
-- ChatGPTから接続するには `/api/mcp` 専用AccessアプリとManaged OAuth等の限定経路を別途承認・設定・検証する必要があります。既存管理アプリ全体のOAuth有効化やD1への認証迂回は行いません。[設計・接続手順](mcp.md)。
+- `npm run check` の型チェック・178件の合成テスト・本番buildが成功。ローカルbrowser gateは固定版Chromiumが未配置で、取得が空/破損archiveとなったため未完了。GitHubの既存browser gateで最終commitを再検証します。実OAuth・所有者ログイン・実X本文・実AI・本番D1は未検証です。
+- ChatGPTから接続するには `/api/mcp` 専用AccessアプリとManaged OAuth等の限定経路を設定・検証し、所有者が最終OAuth同意を行う必要があります。既存管理アプリ全体のOAuth有効化やD1への認証迂回は行いません。[設計・接続手順](mcp.md)。
 
 ## 2026-10-10: 記事の目次と節への移動
 

@@ -1,13 +1,13 @@
 # 所有者用MCP
 
-`https://yomudake.0g0.xyz/api/mcp` は、既存Workerの所有者認証を通るMCPエンドポイントです。コードの追加だけでは本番へ反映されず、ChatGPTの接続やOAuth認可も作成しません。
+`https://yomudake.0g0.xyz/api/mcp` は、既存Workerの所有者認証を通るMCPエンドポイントです。本番反映と接続設定は所有者の明示承認に従って進めます。コードだけではChatGPTのOAuth同意や接続完了を代行できません。
 
 ## 認証と接続
 
 - 既存のCloudflare Accessが署名した `Cf-Access-Jwt-Assertion` だけを使用します。発行者、RS256署名、期限、AUD、所有者メールを毎回確認します。Cookie・メールヘッダー・任意のBearer tokenを代替本人確認にしません。
-- 既定は既存 `ACCESS_AUD`。専用MCP Accessアプリを別途設定するときは `MCP_ACCESS_AUD` にそのAUDを設定します。この場合 `/api/mcp` は専用AUDだけを受け付け、`/admin` や他の `/api/*` は既存AUDだけです。空・不正な専用設定は認証失敗で止めます。
+- 本番設定は `/api/mcp` 専用の `MCP_ACCESS_AUD` を指定し、既存管理画面の `ACCESS_AUD` と分離します。未指定環境での既定は既存 `ACCESS_AUD`。専用MCP Accessアプリを別途設定するときは `MCP_ACCESS_AUD` にそのAUDを設定します。この場合 `/api/mcp` は専用AUDだけを受け付け、`/admin` や他の `/api/*` は既存AUDだけです。空・不正な専用設定は認証失敗で止めます。
 - 汎用MCPクライアントからの直接接続には、Access側で認証済み所有者の署名済みassertionをWorkerへ渡す接続経路が必要です。ブラウザーのAccessサインインページをMCPとして読み取ることはできません。
-- ChatGPT向けの候補は、`/api/mcp` のみを対象とする専用AccessアプリとManaged OAuthです。管理用の既存アプリ全体でManaged OAuthを有効にすると `/admin` や他のAPIも対象になるため避けます。専用アプリ作成、正確なパスへの保護設定、OAuth利用者の所有者限定、client接続/grantは別途承認・実環境検証が必要です。このPRでは設定変更しません。
+- 承認済みのChatGPT向け構成は、`/api/mcp` のみを対象とする専用AccessアプリとManaged OAuthです。管理用の既存アプリ全体でManaged OAuthを有効にすると `/admin` や他のAPIも対象になるため避けます。専用アプリ作成、正確なパスへの保護設定、OAuth利用者の所有者限定、client接続/grantは別途承認・実環境検証が必要です。OAuth認可は336時間、短期tokenは15分です。最終OAuth同意は所有者が認証画面で行います。正確なChatGPT callbackの確認と許可・接続テストが済むまで、接続完了とは扱いません。
 - Portalの上流Service Authは利用者の所有者メールと同じ意味ではありません。サービスtokenを所有者に読み替える構成は使用しません。
 - Clientへ認証値を渡す場合はサービスの安全な認証画面を使います。JWTやCookieを記事、チャット、URL、ログへ貼り付けないでください。
 
@@ -32,7 +32,7 @@ Originがある場合はこのエンドポイントのoriginと完全一致す�
 
 ## 本番運用の未確認事項
 
-ツール呼出しには `MCP_RATE_LIMITER` bindingの `limit({key})` による成功判定が必須です。binding未設定・例外・上限到達では、読取・変換・保存・公開のすべてを実行せず止めます。initialize/discoveryは利用可能です。本番bindingはこのPRで設定していません。既存のCPU/body/time制限と所有者認証は維持しますが、これだけで所有者の誤操作・連続呼出しによるAI料金等の総額は制限できません。専用Access/OAuth設定に加えて、実運用前にCloudflare Rate Limiting bindingのnamespace・呼出し上限・期間と料金上限を確認して設定してください。Cloudflareのrate limitは拠点ごとの制限であり、総額を厳密に制限するものではありません。完全なMCP仕様適合・本番運用検証済みとは主張しません。
+ツール呼出しには `MCP_RATE_LIMITER` bindingの `limit({key})` による成功判定が必須です。binding未設定・例外・上限到達では、読取・変換・保存・公開のすべてを実行せず止めます。initialize/discoveryは利用可能です。所有者の承認に基づき、専用namespace `58001` に6回/60秒のbinding設定を `wrangler.jsonc` に記載しています。公開前に実際のデプロイ設定を確認します。既存のCPU/body/time制限と所有者認証は維持しますが、これだけで所有者の誤操作・連続呼出しによるAI料金等の総額は制限できません。専用Access/OAuth設定に加えて、実運用前にCloudflare Rate Limiting bindingのnamespace・呼出し上限・期間と料金上限を確認して設定してください。Cloudflareのrate limitは拠点ごとの制限であり、総額を厳密に制限するものではありません。完全なMCP仕様適合・本番運用検証済みとは主張しません。
 
 ## 検証範囲
 
