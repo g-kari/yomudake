@@ -47,11 +47,16 @@ input { min-width: 0; padding: 11px 14px; }
 .sidebar-heading h1 { margin: 0; font-size: 13px; color: var(--muted); font-weight: 500; }
 .new-button { color: #fff; background: var(--green); border-color: var(--green); font-size: 14px; }
 .new-button:hover:not(:disabled) { background: #12575e; }
-.draft-list { display: flex; flex-direction: column; }
+.draft-list { display: flex; flex-direction: column; max-height: min(55vh, 520px); overflow-y: auto; scrollbar-gutter: stable; }
 .list-feedback { margin: 0; padding: 0 16px; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; color: var(--muted); }
+.list-pagination { padding: 4px 16px 0; font-size: 12px; line-height: 1.8; color: var(--muted); }
+.page-summary, .page-selection { margin: 0 0 8px; }
+.page-actions { display: flex; flex-direction: column; gap: 8px; }
+.page-actions .secondary-button { min-height: 44px; padding: 8px 10px; font-size: 12px; }
+.page-selection { margin-top: 10px; overflow-wrap: anywhere; }
 .list-error p { margin: 0 0 10px; }
 .list-error button { width: 100%; padding-inline: 8px; font-size: 13px; }
-.draft-row { position: relative; display: flex; align-items: flex-start; gap: 9px; padding: 20px 16px; border: 0; border-bottom: 1px solid #e8edf2; text-align: left; border-radius: 0; font-size: 15px; line-height: 1.65; background: #fff; }
+.draft-row { position: relative; display: flex; flex-shrink: 0; align-items: flex-start; gap: 9px; padding: 20px 16px; border: 0; border-bottom: 1px solid #e8edf2; text-align: left; border-radius: 0; font-size: 15px; line-height: 1.65; background: #fff; }
 .draft-row.selected, .draft-row.selected:hover:not(:disabled) { background: var(--paper); font-weight: 650; }
 .draft-row.selected::before { content: ""; position: absolute; inset: 12px auto 12px 0; width: 4px; background: #d8bd49; }
 .draft-row small { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; font-weight: 400; }
@@ -165,7 +170,10 @@ input { min-width: 0; padding: 11px 14px; }
  .sidebar { padding: 14px 0 0; border-right: 0; border-bottom: 1px solid var(--line); gap: 12px; }
  .sidebar-heading { flex-direction: row; align-items: center; justify-content: space-between; padding: 0 18px; }
  .new-button { padding-inline: 12px; font-size: 13px; }
- .draft-list { flex-direction: row; overflow-x: auto; max-width: 100%; }
+ .draft-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; max-width: 100%; max-height: none; scrollbar-gutter: auto; }
+ .list-pagination { padding: 0 18px; }
+ .page-actions { flex-direction: row; flex-wrap: wrap; }
+ .page-actions .secondary-button { flex: 1 1 130px; }
  .draft-row { width: 200px; flex: 0 0 200px; padding: 16px 18px; border-bottom: 0; border-right: 1px solid var(--line); font-size: 14px; }
  .draft-row.selected::before { inset: auto 12px 0; width: auto; height: 3px; }
  .empty-list { margin: 0 0 8px; }

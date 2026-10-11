@@ -1,5 +1,6 @@
 import {verifyOwnerRequest} from './access.mjs';
-import {listArticles,getArticle,saveArticle} from './storage.mjs';
+import {listArticles,listOwnerArticlePage,getArticle,saveArticle} from './storage.mjs';
+import {ArticlePageError,articleCursorFromUrl} from './article-pages.mjs';
 import {sample} from './sample';
 import {markdownToHtmlWithOutline,markdownExternalLinks} from './export-html';
 import {articleLink,articleRevision,confirmationUrl,exportMarkdown} from './navigation.mjs';
@@ -32,7 +33,7 @@ export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}
  try{
   if(path==='/admin'||path.startsWith('/api/')){const owner=await verifyOwner(request,env);if(!owner.ok)return path.startsWith('/api/')?json({error:owner.error||'所有者のサインインが必要です。'},owner.status||403):html(`<main class="signin">${brand}<h1>所有者のサインインが必要です</h1><p>管理用Access設定を確認してください。匿名では記事を作成・編集できません。</p></main>`,owner.status||403);}
   if(path==='/admin'&&request.method==='GET')return html('<div id="root"></div><script src="/editor.js" defer></script>');
-  if(path==='/api/articles'&&request.method==='GET')return json({articles:await listArticles(env)});
+  if(path==='/api/articles'&&request.method==='GET')return json(await listOwnerArticlePage(env,articleCursorFromUrl(url)));
   if((path==='/api/articles'||path==='/api/convert')&&request.method==='POST'){
    if(!isSameOriginMutation(request))return json({error:'管理画面から操作してください。'},403);
    let data;try{const body=await readBounded(request,215000);data=JSON.parse(new TextDecoder().decode(body));}catch(error){if(error instanceof IngestError)return json({error:error.message},error.status);return json({error:'JSON入力が不正です。'},400);}
@@ -63,6 +64,6 @@ export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}
   if(request.method!=='GET'&&request.method!=='HEAD')return json({error:'読取専用です。'},405);
   if(['/styles.css','/editor.js','/favicon.svg'].includes(path)&&env.ASSETS){const asset=await env.ASSETS.fetch(request);const result=new Response(asset.body,asset);result.headers.set('X-Content-Type-Options','nosniff');result.headers.set('Referrer-Policy','no-referrer');return result;}
   return html('<main class="signin"><h1>ページが見つかりません</h1><a href="/">公開記事へ</a></main>',404);
- }catch(error){if(error instanceof IngestError)return json({error:error.message,...(error.code?{code:error.code}:{})},error.status);return path.startsWith('/api/')?json({error:'処理できませんでした。入力は画面に残っています。時間を置いて再試行してください。'},503):html('<main class="signin"><h1>記事を読み込めませんでした</h1><p>時間を置いて再試行してください。</p></main>',503);}
+ }catch(error){if(error instanceof ArticlePageError)return json({error:error.message},400);if(error instanceof IngestError)return json({error:error.message,...(error.code?{code:error.code}:{})},error.status);return path.startsWith('/api/')?json({error:'処理できませんでした。入力は画面に残っています。時間を置いて再試行してください。'},503):html('<main class="signin"><h1>記事を読み込めませんでした</h1><p>時間を置いて再試行してください。</p></main>',503);}
 }};}
 export default createWorker();
