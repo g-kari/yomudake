@@ -7,6 +7,7 @@ import {isSameOriginMutation,validateArticleInput} from './security.mjs';
 import {readBounded,IngestError} from './fetch-html.mjs';
 import {convertUrl} from './conversion.mjs';
 import {selectWarningArtwork,warningArtworks} from './warning-art.mjs';
+import {handleMcp} from './mcp.mjs';
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"};
 const json=(data,status=200)=>Response.json(data,{status,headers});
@@ -30,8 +31,14 @@ function outboundHtml(destination,a,origin,revision){
 export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}={}){return {async fetch(request,env){
  const url=new URL(request.url),path=url.pathname;
  try{
-  if(path==='/admin'||path.startsWith('/api/')){const owner=await verifyOwner(request,env);if(!owner.ok)return path.startsWith('/api/')?json({error:owner.error||'所有者のサインインが必要です。'},owner.status||403):html(`<main class="signin">${brand}<h1>所有者のサインインが必要です</h1><p>管理用Access設定を確認してください。匿名では記事を作成・編集できません。</p></main>`,owner.status||403);}
+  if(path==='/admin'||path.startsWith('/api/')){const owner=await verifyOwner(request,path==='/api/mcp'&&env.MCP_ACCESS_AUD!==undefined?{...env,ACCESS_AUD:env.MCP_ACCESS_AUD}:env);if(!owner.ok)return path.startsWith('/api/')?json({error:owner.error||'所有者のサインインが必要です。'},owner.status||403):html(`<main class="signin">${brand}<h1>所有者のサインインが必要です</h1><p>管理用Access設定を確認してください。匿名では記事を作成・編集できません。</p></main>`,owner.status||403);}
   if(path==='/admin'&&request.method==='GET')return html('<div id="root"></div><script src="/editor.js" defer></script>');
+  if(path==='/api/mcp'){
+   const result=await handleMcp(request,env,{convert});
+   const response=new Response(result.body,result);
+   for(const [name,value] of Object.entries(headers))response.headers.set(name,value);
+   return response;
+  }
   if(path==='/api/articles'&&request.method==='GET')return json({articles:await listArticles(env)});
   if((path==='/api/articles'||path==='/api/convert')&&request.method==='POST'){
    if(!isSameOriginMutation(request))return json({error:'管理画面から操作してください。'},403);
@@ -66,3 +73,4 @@ export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}
  }catch(error){if(error instanceof IngestError)return json({error:error.message,...(error.code?{code:error.code}:{})},error.status);return path.startsWith('/api/')?json({error:'処理できませんでした。入力は画面に残っています。時間を置いて再試行してください。'},503):html('<main class="signin"><h1>記事を読み込めませんでした</h1><p>時間を置いて再試行してください。</p></main>',503);}
 }};}
 export default createWorker();
+
