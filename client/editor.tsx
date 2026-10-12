@@ -5,8 +5,24 @@ type ApiReply={error?:string;articles?:Article[];url?:string;id?:string;publishe
 import {Markdown} from '../src/markdown';
 import {sample} from '../src/sample';
 import {articleLink} from '../src/navigation.mjs';
+import {ARTICLE_PAGE_SIZE,decodeArticleCursor,encodeArticleCursor} from '../src/article-pages.mjs';
 import {ExternalWarning,type PendingLink} from './external-warning';
 type Article={id:string;title:string;source_url:string;markdown:string;published:number;created_at:string;updated_at:string;published_at:string|null};
+type PageTarget={cursor:string|null;history:(string|null)[]};
+const firstPage=():PageTarget=>({cursor:null,history:[null]});
+function readArticlePage(raw:Record<string,unknown>){
+ const records=raw.articles;
+ if(!Array.isArray(records)||records.length>ARTICLE_PAGE_SIZE||!records.every(isArticle)||new Set(records.map(a=>a.id)).size!==records.length)throw new Error('Article list unavailable');
+ // A bare list remains compatible with the previous API during deployment.
+ const cursor=raw.nextCursor===undefined?null:raw.nextCursor;
+ if(Object.hasOwn(raw,'nextCursor')&&records.some((article,index)=>index>0&&(article.updated_at>records[index-1].updated_at||(article.updated_at===records[index-1].updated_at&&article.id>=records[index-1].id))))throw new Error('Article list order unavailable');
+ if(cursor!==null){
+  if(typeof cursor!=='string'||records.length!==ARTICLE_PAGE_SIZE)throw new Error('Article list unavailable');
+  decodeArticleCursor(cursor);
+  if(encodeArticleCursor(records[records.length-1])!==cursor)throw new Error('Article list unavailable');
+ }
+ return {records,nextCursor:cursor as string|null};
+}
 function isArticle(value:unknown):value is Article{
  if(!value||typeof value!=='object'||Array.isArray(value))return false;
  const article=value as Record<string,unknown>;
@@ -15,42 +31,57 @@ function isArticle(value:unknown):value is Article{
 export default function Editor({signOutPath}:{signOutPath:string}) {
  const [articles,setArticles]=useState<Article[]>([]),[id,setId]=useState(''),[title,setTitle]=useState(sample.title),[markdown,setMarkdown]=useState(sample.markdown),[sourceUrl,setSourceUrl]=useState('');
  const [listPending,setListPending]=useState(true),[listLoaded,setListLoaded]=useState(false),[listError,setListError]=useState('');
+ const [pageHistory,setPageHistory]=useState<(string|null)[]>([null]),[nextCursor,setNextCursor]=useState<string|null>(null),[selectedMeta,setSelectedMeta]=useState<{id:string;created_at:string}|null>(null);
  const [dirty,setDirty]=useState(false);
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
  const draftVersion=useRef(0),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
  const mounted=useRef(false),listRequest=useRef<{version:number}|null>(null),listElement=useRef<HTMLElement|null>(null);
+ const failedPage=useRef<PageTarget|null>(null);
  function draftChanged(){
   draftVersion.current++;
   const pending=conversion.current;
   if(pending){conversion.current=null;pending.controller.abort();setBusy(false);}
  }
  useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;draftVersion.current++;listVersion.current++;conversion.current?.controller.abort();conversion.current=null;saving.current=null;listRequest.current=null;};},[]);
- async function load(active:()=>boolean){
+ async function load(active:()=>boolean,target:PageTarget=firstPage()){
   const version=++listVersion.current;
   const pending={version};listRequest.current=pending;setListPending(true);
   const isCurrent=()=>mounted.current&&active()&&version===listVersion.current;
   try{
-   const r=await fetch('/api/articles',{cache:'no-store'});const raw:unknown=await r.json();
+   const path=target.cursor?`/api/articles?${new URLSearchParams({cursor:target.cursor})}`:'/api/articles';
+   const r=await fetch(path,{cache:'no-store'});const raw:unknown=await r.json();
    if(!isCurrent())return false;
    if(!r.ok||!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('Article list unavailable');
-   const records=(raw as Record<string,unknown>).articles;
-   if(!Array.isArray(records)||!records.every(isArticle)||new Set(records.map(a=>a.id)).size!==records.length)throw new Error('Article list unavailable');
-   setArticles(records);setListLoaded(true);setListError('');return true;
-  }catch(e){if(isCurrent()){setListError('記事一覧を読み込めませんでした。編集中の内容は残っています。');throw e;}}
+   const page=readArticlePage(raw as Record<string,unknown>);
+   if(target.cursor){
+    const position=decodeArticleCursor(target.cursor);
+    if(page.records.some(article=>article.updated_at>position.updatedAt||(article.updated_at===position.updatedAt&&article.id>=position.id)))throw new Error('Article page boundary unavailable');
+   }
+   if(page.nextCursor&&target.history.includes(page.nextCursor))throw new Error('Article page did not advance');
+   setArticles(page.records);setNextCursor(page.nextCursor);setPageHistory(target.history);setListLoaded(true);setListError('');failedPage.current=null;return true;
+  }catch(e){if(isCurrent()){failedPage.current=target;setListError('記事一覧を読み込めませんでした。編集中の内容は残っています。');throw e;}}
   finally{if(isCurrent()&&listRequest.current===pending){listRequest.current=null;setListPending(false);}}
  }
  useEffect(()=>{let active=true;load(()=>active).catch(()=>{});return ()=>{active=false;};},[]);
+ useEffect(()=>{if(listElement.current){listElement.current.scrollTop=0;listElement.current.scrollLeft=0;}},[articles]);
+ useEffect(()=>{const selected=articles.find(a=>a.id===id);if(selected)setSelectedMeta({id:selected.id,created_at:selected.created_at});},[articles,id]);
  async function retryList(trigger:HTMLButtonElement){
-  if(!mounted.current||listRequest.current||saving.current)return;
+  if(!mounted.current||listRequest.current||saving.current||conversion.current)return;
   const restoreFocus=document.activeElement===trigger,version=listVersion.current+1;
-  const succeeded=await load(()=>mounted.current).catch(()=>false);
+  const succeeded=await load(()=>mounted.current,failedPage.current||firstPage()).catch(()=>false);
+  if(succeeded&&mounted.current&&version===listVersion.current&&restoreFocus&&(document.activeElement===trigger||document.activeElement===document.body))listElement.current?.focus();
+ }
+ async function changePage(target:PageTarget,trigger:HTMLButtonElement){
+  if(!mounted.current||listRequest.current||saving.current||conversion.current)return;
+  const restoreFocus=document.activeElement===trigger,version=listVersion.current+1;
+  const succeeded=await load(()=>mounted.current,target).catch(()=>false);
   if(succeeded&&mounted.current&&version===listVersion.current&&restoreFocus&&(document.activeElement===trigger||document.activeElement===document.body))listElement.current?.focus();
  }
  useEffect(()=>{function warn(e:BeforeUnloadEvent){if(dirty){e.preventDefault();e.returnValue='';}}window.addEventListener('beforeunload',warn);return ()=>window.removeEventListener('beforeunload',warn);},[dirty]);
  function mayLeave(){return !dirty||window.confirm('保存していない変更があります。破棄して記事を切り替えますか？');}
- function createNew(){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId('');setTitle('');setMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
- function openArticle(a:Article){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setTitle(a.title);setMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
+ function createNew(){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId('');setSelectedMeta(null);setTitle('');setMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
+ function openArticle(a:Article){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setSelectedMeta({id:a.id,created_at:a.created_at});setTitle(a.title);setMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
  async function save(makePublic:boolean){
   if(busy||saving.current||conversion.current)return;
   if(makePublic&&!rights){setMessage('本文・出典・ライセンスを確認し、公開確認にチェックしてください。');return;}
@@ -96,7 +127,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   finally{if(conversion.current===pending){conversion.current=null;setBusy(false);}}
  }
  async function copyUrl(){try{await navigator.clipboard.writeText(shareUrl);setMessage('共有URLをコピーしました。');}catch{setMessage('コピーできませんでした。表示されたURLを選択してコピーしてください。');}}
- const selectedArticle=articles.find(a=>a.id===id);
+ const selectedArticle=articles.find(a=>a.id===id)||(selectedMeta?.id===id?selectedMeta:null);
  const origin=window.location.origin;
  const sourceLink=articleLink(sourceUrl,origin);
  const externalLink=(href:string,label:string,key?:number)=><button key={key} type="button" className="external-link" onClick={e=>setPendingLink({href,trigger:e.currentTarget})}>{label}</button>;
@@ -123,8 +154,16 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
     {articles.length?articles.map(a=><button key={a.id} className={`draft-row ${id===a.id?'selected':''}`} aria-current={id===a.id?'true':undefined} onClick={()=>openArticle(a)} disabled={busy}>
      <span className={`status-dot ${a.published?'live':''}`} aria-hidden="true"/>
      <span>{a.title}<small>{a.published?'公開中':'下書き'} · {a.updated_at.slice(0,10)}</small></span>
-    </button>):listLoaded&&!listPending&&!listError?<p className="empty-list">保存した記事はここに並びます。新しい下書きから始められます。</p>:null}
+    </button>):listLoaded&&!listPending&&!listError?<p className="empty-list">{pageHistory.length===1?'保存した記事はここに並びます。新しい下書きから始められます。':'このページの記事はありません。「新しい記事のページ」で戻れます。'}</p>:null}
    </nav>
+   {listLoaded&&<div className="list-pagination" role="group" aria-label="記事一覧のページ切替">
+    <p className="page-summary" role="status" aria-live="polite">{pageHistory.length}ページ目 · {articles.length}件{listPending?' · 読み込み中':''}</p>
+    <div className="page-actions">
+     <button className="secondary-button" type="button" disabled={listPending||busy||pageHistory.length===1} onClick={e=>{const history=pageHistory.slice(0,-1);changePage({cursor:history[history.length-1],history},e.currentTarget);}}>新しい記事のページ</button>
+     <button className="secondary-button" type="button" disabled={listPending||busy||!nextCursor} onClick={e=>{if(nextCursor)changePage({cursor:nextCursor,history:[...pageHistory,nextCursor]},e.currentTarget);}}>以前の記事のページ</button>
+    </div>
+    {selectedMeta?.id===id&&!articles.some(a=>a.id===id)&&<p className="page-selection">選択中の記事はこのページにありません。編集中の内容はそのままです。</p>}
+   </div>}
    <div className="sidebar-footer"><a href="/" target="_blank" rel="noopener noreferrer">公開ページを開く ↗</a><a href={signOutPath} target="_top">サインアウト</a></div>
   </aside>
   <section id="editor-page" className="editor-main" aria-label="記事の編集" tabIndex={-1}>
