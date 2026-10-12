@@ -157,9 +157,9 @@ async function waitListIdle(page) {
 
 async function assertLoading(page, hasError = false) {
   await page.waitForFunction(() => document.querySelector('.draft-list')?.getAttribute('aria-busy') === 'true');
-  await page.locator('.sidebar').getByRole('status').waitFor({state: 'visible'});
+  await page.locator('.sidebar .list-feedback[role="status"]').waitFor({state: 'visible'});
   assert.equal(await page.locator('.draft-list').getAttribute('aria-busy'), 'true');
-  assert.equal(await page.locator('.sidebar').getByRole('status').textContent(), loadingText);
+  assert.equal(await page.locator('.sidebar .list-feedback[role="status"]').textContent(), loadingText);
   assert.equal(await page.locator('.empty-list').count(), 0);
   if (hasError) {
     assert.ok((await page.locator('.sidebar').getByRole('alert').textContent()).includes(errorText));
@@ -179,7 +179,7 @@ async function assertListFailure(page) {
   assert.ok((await page.locator('.sidebar').getByRole('alert').textContent()).includes(errorText));
   assert.equal(await page.getByRole('button', {name: retryName, exact: true}).isEnabled(), true);
   assert.equal(await page.locator('.empty-list').count(), 0);
-  assert.equal(await page.locator('.sidebar').getByRole('status').count(), 0);
+  assert.equal(await page.locator('.sidebar .list-feedback[role="status"]').count(), 0);
 }
 
 async function assertRecovery(page, articleCount = 1) {
@@ -187,7 +187,7 @@ async function assertRecovery(page, articleCount = 1) {
   assert.equal(await page.locator('.draft-row').count(), articleCount);
   assert.equal(await page.locator('.sidebar').getByRole('alert').count(), 0);
   assert.equal(await page.getByRole('button', {name: retryName, exact: true}).count(), 0);
-  assert.equal(await page.locator('.sidebar').getByRole('status').count(), 0);
+  assert.equal(await page.locator('.sidebar .list-feedback[role="status"]').count(), 0);
   assert.equal(await page.locator('.empty-list').count(), 0);
 }
 
