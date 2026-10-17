@@ -2,7 +2,7 @@
 
 ## デプロイ（Workers Builds）
 
-- 本番設定はリポジトリの `wrangler.jsonc`。`main` では `npm ci && npm run build` の後 `npx wrangler deploy` を想定
+- 本番設定はリポジトリの `wrangler.jsonc`。`main` では `pnpm install --frozen-lockfile && pnpm run build` の後 `pnpm exec wrangler deploy` を想定
 - D1 `yomudake-articles` には `migrations/0001_articles.sql` を**手動適用済み**。ビルドはマイグレーションを走らせない
 - `wrangler d1 migrations apply` は、`d1_migrations` に `0001` を登録していない状態では実行しない（二重適用の恐れ）
 - `OWNER_EMAIL` は Worker secret。`vars` やソースに入れない

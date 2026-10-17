@@ -11,16 +11,19 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          run_install: false
       - uses: actions/setup-node@v7.1.0
         with:
           node-version: '24'
-          cache: npm
-      - run: npm ci
-      - run: npm run check
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
       - name: Install pinned test browser
-        run: npx --no-install playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium
       - name: Check notebook desktop and mobile
-        run: npm run test:browser
+        run: pnpm run test:browser
       - name: Retain synthetic notebook screenshots
         if: always()
         uses: actions/upload-artifact@v7.0.2
