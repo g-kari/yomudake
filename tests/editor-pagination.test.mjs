@@ -15,6 +15,12 @@ import {createRoot} from 'react-dom/client';
 import Editor from './client/editor';
 import {ARTICLE_PAGE_SIZE,decodeArticleCursor,encodeArticleCursor} from './src/article-pages.mjs';
 window.IS_REACT_ACT_ENVIRONMENT=true;
+const nativeTimeout=window.setTimeout.bind(window),nativeClear=window.clearTimeout.bind(window);
+let deadlines=new Map(),nextDeadline=900000;
+window.setTimeout=(callback,delay,...args)=>{if(delay===15000){const id=nextDeadline++;deadlines.set(id,()=>callback(...args));return id;}return nativeTimeout(callback,delay,...args);};
+window.clearTimeout=id=>{if(deadlines.has(id))deadlines.delete(id);else nativeClear(id);};
+async function expire(){check(deadlines.size===1,'Expected one page deadline');const [id,callback]=[...deadlines][0];deadlines.delete(id);await act(async()=>callback());}
+
 const OLDER='以前の記事のページ',NEWER='新しい記事のページ',RETRY='記事一覧を再読み込み';
 const stamp='2026-10-09T12:00:00.000Z';
 function article(index,equalTime=false){return {id:'00000000-0000-4000-8000-'+String(index).padStart(12,'0'),title:'Synthetic article '+String(index).padStart(4,'0'),source_url:'https://source.example.test/article/'+index,markdown:'# Synthetic body '+index,published:index%2,created_at:'2023-02-03T04:05:06Z',updated_at:equalTime?stamp:new Date(Date.parse(stamp)+index*1000).toISOString(),published_at:index%2?'2026-10-08T00:00:00Z':null};}
@@ -66,6 +72,10 @@ async function newDraft(){await click('＋ 新しい下書き');await edit('inpu
 const sent=index=>JSON.parse(posts[index].options.body);
 async function acknowledge(index=0){check(posts[index],'Missing deferred POST '+index);const input=sent(index);await act(async()=>posts[index].resolve(Response.json({id:input.id,published:input.published,url:'/p/'+input.id})));}
 const tests=[
+ ['stalled next page retains prior rows and dirty draft, retries exact cursor and ignores late response',async()=>{
+  const records=library(205),first=await answer(0,records),prior=pageSnapshot();await newDraft();const before=snapshot();await click(OLDER);await expire();failed();equal(pageSnapshot(),prior,'Timeout changed prior page');equal(snapshot(),before,'Timeout changed draft');check(gets[1].options.signal.aborted,'Page timeout did not abort GET');await click(RETRY);request(2,first.nextCursor);expectPage(await answer(2,records),2);await reply(1,page(records,first.nextCursor));expectPage(page(records,first.nextCursor),2);equal(snapshot(),before,'Late page changed draft');check(deadlines.size===0,'Page success retained timeout');readOnly();
+ }],
+
  ['initial list remains editable and pagination appears only after successful metadata',async()=>{
   request(0);check(list().getAttribute('aria-busy')==='true','Initial list lacks loading state');check(!document.querySelector('.list-pagination'),'Pagination appeared before successful initial list');check(!document.querySelector('.empty-list'),'Initial request appeared empty');check(!element('input[name="title"]').disabled&&!element('#markdown-body').disabled,'Initial listing locked editing');const payload=await answer(0,library(101));expectPage(payload,1);readOnly();
  }],
@@ -249,7 +259,7 @@ test('actual Editor cursor pagination preserves drafts, recovery, save precedenc
   await import(pathToFileURL(output).href);await window.editorPaginationTestDone;
   const report=JSON.parse(window.document.querySelector('#result').textContent);
   assert.ok(!report.fatal,report.fatal);
-  assert.equal(report.total,70,'Unexpected pagination coverage count');
+  assert.equal(report.total,71,'Unexpected pagination coverage count');
   assert.equal(report.results.length,report.total,'Incomplete pagination coverage');
   for(const result of report.results)await t.test(result.name,()=>assert.equal(result.ok,true,result.error));
  }finally{
