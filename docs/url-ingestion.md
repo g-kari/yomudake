@@ -24,8 +24,10 @@ Cloudflareのhosted Workers security modelは、outbound HTTPをproxyが仲介�
 5. 新規GETを固定Accept/User-Agentのみで取得。redirectは3回まで、毎回URLとDNSを再検査。同じhostnameへのredirectも再照会
 6. DNS、redirect、body readerを含む総取得10秒、読込後のHTML 1MB。既知のサイズ超過や拒否のbodyはcancel
 7. charsetを復号後parse5で再構成。許可したtext-markupだけを残し、元属性、script/style/meta/base/JSON-LD、image/media/iframe/formなどの外部参照は除去
-8. リンクは一時fragmentに置き換え、1MB以内のHTML Blobだけを `AI.toMarkdown` に渡す。画面側の待機30秒、結果200KB以内。安全確認したリンクを戻す
+8. リンクは一時fragmentに置き換え、1MB以内のHTML Blobだけを `AI.toMarkdown` に渡す。WorkerでAI結果を待つ時間は30秒、結果200KB以内。先行する取得10秒とは別の段階。安全確認したリンクを戻す
 9. Markdown編集後、所有者が公開権利・ライセンス・個人情報を確認して選択公開。HTML表示はraw HTMLを実行せず、外部画像を読まない
+
+管理画面には、変換リクエストの開始から応答JSONの読込までを含む60秒の待機上限を別に設けます。時間切れではブラウザーの読取を中断し、未保存のタイトル・本文・出典・公開確認・表示タブ・公開状態を保って編集を再開できます。古い応答は新しい編集や再試行を上書きしません。変換や保存を自動で再送せず、再試行は利用者が明示的に選びます。変換APIは結果を返すだけで、記事を保存・公開しません。
 
 特殊用途のglobally-reachable例外も保守的に拒否するため、一部の特殊ネットワーク上のページは取得できません。IPv6はIANA unicast registryのALLOCATED prefix表（2026-10-09確認）から特殊/transition範囲を除いたpolicyです。未割当・reserved spaceも拒否します。IANAの変更時は表と試験を更新します。
 
@@ -36,7 +38,7 @@ Cloudflareのhosted Workers security modelは、outbound HTTPをproxyが仲介�
 - 公開serverが自身のbackendの情報を返す場合、その出所は証明できない
 - 未知のsecretを含むURL path/queryを完全には判定できない。非公開・署名付きURLを入力しない
 - GETにも取得先で副作用があり得る。アクセス制限・CAPTCHA・security warning・paywallを回避しない
-- 30秒待機timeoutはCloudflareの変換処理のbackend cancellationや利用料金上限を意味しない
+- WorkerのAI待機30秒と管理画面の応答待機60秒は、いずれもCloudflareの変換処理のbackend cancellationや利用料金上限を意味しない。再試行は時間を置いて明示的に操作する
 - text conversion以外を使わず、CPU・body・時間を制限するが、Worker/D1全体の金額hard capではない
 
 より強い要件として接続時IPの固定・独立検査が必要なら、専用egress gatewayを別途設計します。この個人用リーダーの要件では、上記hosted boundaryを採用します。

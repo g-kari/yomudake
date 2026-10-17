@@ -10,6 +10,7 @@ import {ExternalWarning,type PendingLink} from './external-warning';
 type Article={id:string;title:string;source_url:string;markdown:string;published:number;created_at:string;updated_at:string;published_at:string|null};
 type PageTarget={cursor:string|null;history:(string|null)[]};
 const LIST_TIMEOUT_MS=15_000;
+const CONVERSION_TIMEOUT_MS=60_000;
 const firstPage=():PageTarget=>({cursor:null,history:[null]});
 function readArticlePage(raw:Record<string,unknown>){
  const records=raw.articles;
@@ -121,9 +122,18 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   const pending={controller:new AbortController(),version};conversion.current=pending;
   const isCurrent=()=>conversion.current===pending&&draftVersion.current===version;
   setBusy(true);setMessage('');
+  let timeout:number|undefined,onAbort=()=>{};
+  const aborted=new Promise<never>((_,reject)=>{
+   onAbort=()=>{window.clearTimeout(timeout);reject(new Error('変換の応答を60秒以内に確認できませんでした。入力は残っています。時間を置いて再試行するか、本文を直接編集してください。'));};
+   pending.controller.signal.addEventListener('abort',onAbort,{once:true});
+  });
+  timeout=window.setTimeout(()=>pending.controller.abort(),CONVERSION_TIMEOUT_MS);
   try{
-   const r=await fetch('/api/convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:sourceUrl}),signal:pending.controller.signal});
-   const raw:unknown=await r.json();
+   // Bound headers and JSON even if transport cancellation is ignored.
+   const {r,raw}=await Promise.race([(async()=>{
+    const r=await fetch('/api/convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:sourceUrl}),signal:pending.controller.signal});
+    const raw:unknown=await r.json();return {r,raw};
+   })(),aborted]);
    if(!isCurrent())return;
    if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('変換結果を読み込めませんでした。本文は残っています。');
    const data=raw as ApiReply;
@@ -131,7 +141,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
    if(typeof data.markdown!=='string'||('title' in data&&typeof data.title!=='string')||('sourceUrl' in data&&typeof data.sourceUrl!=='string'))throw new Error('変換結果を読み込めませんでした。本文は残っています。');
    draftVersion.current++;setMarkdown(data.markdown);setTitle(data.title||'変換した記事');setSourceUrl(data.sourceUrl||sourceUrl);setDirty(true);setRights(false);setTab('preview');setMessage('Markdownに変換しました。本文・出典・ライセンスを確認してから公開してください。');
   }catch(e){if(isCurrent())setMessage(e instanceof Error?e.message:'変換できませんでした。');}
-  finally{if(conversion.current===pending){conversion.current=null;setBusy(false);}}
+  finally{window.clearTimeout(timeout);pending.controller.signal.removeEventListener('abort',onAbort);if(conversion.current===pending){conversion.current=null;setBusy(false);}}
  }
  async function copyUrl(){try{await navigator.clipboard.writeText(shareUrl);setMessage('共有URLをコピーしました。');}catch{setMessage('コピーできませんでした。表示されたURLを選択してコピーしてください。');}}
  const selectedArticle=articles.find(a=>a.id===id)||(selectedMeta?.id===id?selectedMeta:null);
