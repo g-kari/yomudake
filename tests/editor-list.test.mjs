@@ -13,6 +13,12 @@ import React,{act,Component,StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import Editor from './client/editor';
 window.IS_REACT_ACT_ENVIRONMENT=true;
+const nativeTimeout=window.setTimeout.bind(window),nativeClear=window.clearTimeout.bind(window);
+let deadlines=new Map(),nextDeadline=900000;
+window.setTimeout=(callback,delay,...args)=>{if(delay===15000){const id=nextDeadline++;deadlines.set(id,()=>callback(...args));return id;}return nativeTimeout(callback,delay,...args);};
+window.clearTimeout=id=>{if(deadlines.has(id))deadlines.delete(id);else nativeClear(id);};
+async function expire(){check(deadlines.size===1,'Expected one active list deadline: '+deadlines.size);const [id,callback]=[...deadlines][0];deadlines.delete(id);await act(async()=>callback());}
+
 const saved={id:'c276dbe0-bdb7-47e0-8e6c-adfa3f8a7d8d',title:'Saved list fixture',source_url:'https://source.example.test/saved',markdown:'# Saved list body',published:1,created_at:'2026-10-09T00:00:00Z',updated_at:'2026-10-09T00:00:00Z',published_at:'2026-10-09T00:00:00Z'};
 const fresh={...saved,id:'6d467bf2-2d45-4343-90b0-85bd24d4fb96',title:'Fresh list fixture',published:0,published_at:null};
 let root,gets=[],posts=[],conversions=[],confirmations=[],renderErrors=[];
@@ -54,6 +60,23 @@ async function newDraft(){await click('＋ 新しい下書き');await edit('inpu
 const sent=index=>JSON.parse(posts[index].options.body);
 async function acknowledge(index=0){const input=sent(index);await act(async()=>posts[index].resolve(Response.json({id:input.id,published:input.published,url:'/p/'+input.id})));}
 const tests=[
+ ['save refresh aborts superseded initial read and keeps only replacement deadline',async()=>{
+  await newDraft();const old=gets[0];await click('下書き保存');await acknowledge();check(old.options.signal.aborted,'Superseded initial read not aborted');check(deadlines.size===1,'Superseded deadline not cleared');check(!gets[1].options.signal.aborted,'Replacement read was canceled');await reply(0,[saved]);busy();check(deadlines.size===1,'Late original cleared replacement deadline');await reply(1,[fresh]);settled();check(deadlines.size===0,'Replacement deadline leaked');
+ }],
+
+ ['initial timeout aborts transport, keeps dirty draft, retries and ignores late success',async()=>{
+  await newDraft();const before=snapshot();await expire();failed();check(gets[0].options.signal.aborted,'Timeout did not abort GET');equal(snapshot(),before,'Timeout changed draft');check(unloadWarns(),'Timeout cleared dirty warning');await click('記事一覧を再読み込み');await reply(1,[fresh]);await reply(0,[saved]);settled();check(list().textContent.includes(fresh.title)&&!list().textContent.includes(saved.title),'Late timed-out response replaced retry');equal(snapshot(),before,'Recovery changed draft');check(deadlines.size===0,'Successful retry retained deadline');readOnly();
+ }],
+ ['timeout covers stalled JSON body and ignores its late malformed result',async()=>{
+  let finish;await rawReply(0,{ok:true,json:()=>new Promise(resolve=>{finish=resolve;})});await expire();failed();await click('記事一覧を再読み込み');await reply(1,[fresh]);await act(async()=>finish(null));settled();check(list().textContent.includes(fresh.title),'Late body replaced retry');check(!document.querySelector('.sidebar [role="alert"]'),'Late JSON resurrected failure');readOnly();
+ }],
+ ['confirmed save refresh timeout unlocks editor without losing saved acknowledgement',async()=>{
+  await reply(0);await newDraft();await click('公開する');await acknowledge();check(element('#markdown-body').disabled,'Save refresh did not lock');await expire();failed();check(!element('#markdown-body').disabled,'Timeout left editor locked');check(!unloadWarns(),'Timeout dirtied acknowledged save');check(notice().includes('公開しました。'),'Timeout hid confirmed publication');const before=snapshot();await click('記事一覧を再読み込み');await reply(2,[fresh]);await reply(1,[saved]);equal(snapshot(),before,'Late save refresh changed publication');check(posts.length===1,'Retry repeated mutation');
+ }],
+ ['unmount aborts pending request and clears its timer before new editor starts',async()=>{
+  const old=gets[0];await unmount();check(old.options.signal.aborted,'Unmount did not abort read');check(deadlines.size===0,'Unmount leaked deadline');await setup();await reply(0,[fresh]);await act(async()=>old.resolve(Response.json({articles:[saved]})));settled();check(list().textContent.includes(fresh.title),'Old request reached new editor');check(deadlines.size===0,'New success leaked deadline');
+ }],
+
  ['initial pending list has a live loading status and never looks empty',async()=>{
   busy();check(!document.querySelector('.empty-list'),'Initial pending request looked like an empty library');check(!element('input[name="title"]').disabled&&!element('#markdown-body').disabled,'List-only loading locked the draft');readOnly();await reply(0);healthy();settled();check(list().textContent.includes(saved.title),'Valid list was not rendered');check(!document.querySelector('.empty-list'),'Populated list showed an empty state');
  }],
@@ -155,7 +178,7 @@ test('actual Editor article-list recovery preserves drafts and response preceden
   await import(pathToFileURL(output).href);await window.editorListTestDone;
   const report=JSON.parse(window.document.querySelector('#result').textContent);
   assert.ok(!report.fatal,report.fatal);
-  assert.equal(report.total,44,'Unexpected article-list coverage count');
+  assert.equal(report.total,49,'Unexpected article-list coverage count');
   assert.equal(report.results.length,report.total,'Incomplete article-list coverage');
   for(const result of report.results)await t.test(result.name,()=>assert.equal(result.ok,true,result.error));
  }finally{

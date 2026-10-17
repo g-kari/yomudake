@@ -9,6 +9,7 @@ import {ARTICLE_PAGE_SIZE,decodeArticleCursor,encodeArticleCursor} from '../src/
 import {ExternalWarning,type PendingLink} from './external-warning';
 type Article={id:string;title:string;source_url:string;markdown:string;published:number;created_at:string;updated_at:string;published_at:string|null};
 type PageTarget={cursor:string|null;history:(string|null)[]};
+const LIST_TIMEOUT_MS=15_000;
 const firstPage=():PageTarget=>({cursor:null,history:[null]});
 function readArticlePage(raw:Record<string,unknown>){
  const records=raw.articles;
@@ -36,21 +37,27 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
  const draftVersion=useRef(0),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
- const mounted=useRef(false),listRequest=useRef<{version:number}|null>(null),listElement=useRef<HTMLElement|null>(null);
+ const mounted=useRef(false),listRequest=useRef<{version:number;controller:AbortController}|null>(null),listElement=useRef<HTMLElement|null>(null);
  const failedPage=useRef<PageTarget|null>(null);
  function draftChanged(){
   draftVersion.current++;
   const pending=conversion.current;
   if(pending){conversion.current=null;pending.controller.abort();setBusy(false);}
  }
- useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;draftVersion.current++;listVersion.current++;conversion.current?.controller.abort();conversion.current=null;saving.current=null;listRequest.current=null;};},[]);
+ useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;draftVersion.current++;listVersion.current++;conversion.current?.controller.abort();conversion.current=null;saving.current=null;listRequest.current?.controller.abort();listRequest.current=null;};},[]);
  async function load(active:()=>boolean,target:PageTarget=firstPage()){
+  listRequest.current?.controller.abort();
   const version=++listVersion.current;
-  const pending={version};listRequest.current=pending;setListPending(true);
+  const controller=new AbortController();
+  const pending={version,controller};listRequest.current=pending;setListPending(true);
+  let timeout:number|undefined;
+  const aborted=new Promise<never>((_,reject)=>controller.signal.addEventListener('abort',()=>reject(new Error('Article list unavailable')),{once:true}));
+  timeout=window.setTimeout(()=>controller.abort(),LIST_TIMEOUT_MS);
   const isCurrent=()=>mounted.current&&active()&&version===listVersion.current;
   try{
    const path=target.cursor?`/api/articles?${new URLSearchParams({cursor:target.cursor})}`:'/api/articles';
-   const r=await fetch(path,{cache:'no-store'});const raw:unknown=await r.json();
+   // The deadline covers headers and JSON, even when a transport ignores abort.
+   const {r,raw}=await Promise.race([(async()=>{const r=await fetch(path,{cache:'no-store',signal:controller.signal});const raw:unknown=await r.json();return {r,raw};})(),aborted]);
    if(!isCurrent())return false;
    if(!r.ok||!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('Article list unavailable');
    const page=readArticlePage(raw as Record<string,unknown>);
@@ -61,7 +68,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
    if(page.nextCursor&&target.history.includes(page.nextCursor))throw new Error('Article page did not advance');
    setArticles(page.records);setNextCursor(page.nextCursor);setPageHistory(target.history);setListLoaded(true);setListError('');failedPage.current=null;return true;
   }catch(e){if(isCurrent()){failedPage.current=target;setListError('記事一覧を読み込めませんでした。編集中の内容は残っています。');throw e;}}
-  finally{if(isCurrent()&&listRequest.current===pending){listRequest.current=null;setListPending(false);}}
+  finally{window.clearTimeout(timeout);if(isCurrent()&&listRequest.current===pending){listRequest.current=null;setListPending(false);}}
  }
  useEffect(()=>{let active=true;load(()=>active).catch(()=>{});return ()=>{active=false;};},[]);
  useEffect(()=>{if(listElement.current){listElement.current.scrollTop=0;listElement.current.scrollLeft=0;}},[articles]);
