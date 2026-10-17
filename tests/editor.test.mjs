@@ -13,6 +13,10 @@ import Editor from './client/editor';
 window.IS_REACT_ACT_ENVIRONMENT=true;
 const saved={id:'c276dbe0-bdb7-47e0-8e6c-adfa3f8a7d8d',title:'Saved fixture',source_url:'https://source.example.test/saved',markdown:'# Saved body',published:1,created_at:'2026-10-09T00:00:00Z',updated_at:'2026-10-09T00:00:00Z',published_at:'2026-10-09T00:00:00Z'};
 let root,requests=[],confirmations=[],accept=true;
+const deadlines=new Map();let nextDeadline=900000,clock=0;
+const nativeTimeout=window.setTimeout.bind(window),nativeClear=window.clearTimeout.bind(window);
+window.setTimeout=(callback,delay,...args)=>{if(delay===60000){const id=nextDeadline++;deadlines.set(id,{due:clock+delay,run:()=>callback(...args)});return id;}return nativeTimeout(callback,delay,...args);};
+window.clearTimeout=id=>{if(deadlines.has(id))deadlines.delete(id);else nativeClear(id);};
 window.confirm=message=>{confirmations.push(message);return accept;};
 window.fetch=(url,options={})=>{
  if(url==='/api/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({articles:[saved]}));
@@ -34,8 +38,39 @@ async function setup(){requests=[];confirmations=[];accept=true;root=createRoot(
 async function newDraft(){await click('＋ 新しい下書き');await edit('input[name="title"]','My edited title');await edit('#markdown-body','# My edited body');await edit('#source-url','https://source.example.test/new');}
 async function finish(index,data,status=200){await act(async()=>{requests[index].resolve(Response.json(data,{status}));});}
 async function fail(index,message){await act(async()=>{requests[index].reject(new Error(message));});}
+async function advance(milliseconds){clock+=milliseconds;await act(async()=>{for(const [id,timer] of [...deadlines])if(timer.due<=clock){deadlines.delete(id);timer.run();}});}
+async function expire(){await advance(60000);}
+function unloadWarns(){const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;}
+function recovered(){check(!url().disabled&&!title().disabled&&!body().disabled,'Deadline left editor locked');check(element('.notice').textContent.includes('60秒'),'Deadline guidance missing');check(deadlines.size===0,'Settled deadline leaked');}
 const converted={markdown:'# Converted fixture',title:'Converted fixture',sourceUrl:'https://source.example.test/converted'};
 const tests=[
+ ['stalled headers time out without changing the complete public draft or retrying',async()=>{
+  await click('Saved fixture公開中 · 2026-10-09');await edit('#markdown-body','# Unsaved private fixture');await act(async()=>rights().click());const before=snapshot();await click('URLから変換');check(url().disabled,'Conversion did not lock');await advance(59999);check(url().disabled,'Conversion timed out before 60 seconds');await advance(1);recovered();equal(snapshot(),before,'Timeout changed the public draft');check(unloadWarns(),'Timeout cleared dirty warning');check(requests[0].options.signal.aborted,'Deadline did not abort transport');check(requests.length===1,'Deadline automatically retried');await edit('#markdown-body','# Editable after timeout');check(body().value==='# Editable after timeout','Editing did not recover');
+ }],
+ ['stalled JSON times out and its late body cannot overwrite a successful explicit retry',async()=>{
+  await newDraft();await act(async()=>rights().click());const before=snapshot();await click('URLから変換');let finishBody;await act(async()=>requests[0].resolve({ok:true,json:()=>new Promise(resolve=>{finishBody=resolve;})}));await expire();recovered();equal(snapshot(),before,'Body timeout changed draft');check(unloadWarns(),'Body timeout cleared dirty warning');check(requests.length===1,'Body timeout retried automatically');await click('URLから変換');check(requests.length===2,'Explicit retry did not start once');await finish(1,{...converted,title:'Explicit retry'});check(title().value==='Explicit retry','Explicit retry failed');const after=snapshot();await act(async()=>finishBody({...converted,title:'Late body'}));equal(snapshot(),after,'Late body overwrote retry');check(deadlines.size===0,'Retry success retained timer');
+ }],
+ ['timed-out success cannot overwrite or unlock a newer conversion',async()=>{
+  await newDraft();await click('URLから変換');await expire();await click('URLから変換');const before=snapshot();await finish(0,{...converted,title:'Late headers'});equal(snapshot(),before,'Old headers changed retry draft');check(url().disabled,'Old success unlocked retry');check(deadlines.size===1,'Old success cleared new timer');await finish(1,converted);check(title().value===converted.title&&!url().disabled,'Retry did not complete');check(deadlines.size===0,'Retry timer leaked');
+ }],
+ ['timed-out fetch and JSON failures cannot replace a newer conversion status',async()=>{
+  for(const bodyStall of [false,true]){
+   const index=requests.length;await newDraft();await click('URLから変換');let rejectBody;
+   if(bodyStall)await act(async()=>requests[index].resolve({ok:true,json:()=>new Promise((resolve,reject)=>{rejectBody=reject;})}));
+   await expire();await click('URLから変換');const before=snapshot();
+   if(bodyStall)await act(async()=>rejectBody(new Error('Obsolete body failure')));else await fail(index,'Obsolete fetch failure');
+   equal(snapshot(),before,'Late failure changed draft');check(!document.querySelector('.notice')?.textContent.includes('Obsolete'),'Late failure surfaced');check(url().disabled&&deadlines.size===1,'Late failure unlocked or cleared retry');await finish(index+1,converted);
+  }
+ }],
+ ['success and HTTP or malformed failures clear the conversion deadline',async()=>{
+  await newDraft();await click('URLから変換');check(deadlines.size===1,'Missing active deadline');await finish(0,converted);check(deadlines.size===0,'Success leaked deadline');await click('URLから変換');await finish(1,{error:'Existing HTTP message'},504);check(element('.notice').textContent==='Existing HTTP message','HTTP message changed');check(deadlines.size===0,'HTTP failure leaked deadline');await click('URLから変換');await finish(2,null);check(deadlines.size===0,'Malformed response leaked deadline');
+ }],
+ ['draft invalidation cancels its deadline without clearing a newer request timer',async()=>{
+  await newDraft();await click('URLから変換');await edit('#markdown-body','# New queued body');check(requests[0].options.signal.aborted,'Draft edit did not abort');check(deadlines.size===0,'Draft edit leaked deadline');await click('URLから変換');check(deadlines.size===1,'New conversion deadline missing');await finish(0,converted);check(deadlines.size===1&&url().disabled,'Obsolete completion affected new request');await finish(1,converted);check(deadlines.size===0,'New success leaked deadline');
+ }],
+ ['unmount cancels the conversion deadline and old completion cannot reach a new editor',async()=>{
+  await newDraft();await click('URLから変換');const old=requests[0];await act(async()=>root.unmount());root=null;check(old.options.signal.aborted,'Unmount did not abort conversion');check(deadlines.size===0,'Unmount leaked deadline');await setup();const before=snapshot();await act(async()=>old.resolve(Response.json(converted)));equal(snapshot(),before,'Old completion changed new editor');check(deadlines.size===0,'Old completion restored a deadline');
+ }],
  ['cancel protects the complete existing draft and makes no conversion request',async()=>{
   await click('Saved fixture公開中 · 2026-10-09');await edit('#markdown-body','# Unsaved private fixture');await act(async()=>{rights().click();});
   const before=snapshot();accept=false;await click('URLから変換');equal(snapshot(),before,'Draft changed after cancel');check(requests.length===0,'Cancel sent conversion request');check(confirmations.length===1&&confirmations[0].includes('タイトルと本文を置き換え'),'Missing replacement confirmation');check(!url().disabled,'Cancel left editor busy');
@@ -115,7 +150,7 @@ test('actual owner Editor interaction handlers protect drafts with synthetic API
   await window.editorTestDone;
   const report=JSON.parse(window.document.querySelector('#result').textContent);
   assert.ok(!report.fatal,report.fatal);
-  assert.equal(report.results.length,18,'Incomplete editor coverage');
+  assert.equal(report.results.length,25,'Incomplete editor coverage');
   for(const result of report.results)await t.test(result.name,()=>assert.equal(result.ok,true,result.error));
  }finally{
   await window.happyDOM.close();
