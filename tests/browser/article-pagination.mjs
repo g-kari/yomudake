@@ -65,7 +65,7 @@ if(process.argv.includes('--list')){
    if(url.origin!==origin){externalRequests.push(record);return route.abort('blockedbyclient');}
    if(url.pathname==='/api/articles'&&request.method()==='GET'){
     gets.push(url.pathname+url.search);const plan=plans.shift();
-    if(plan){assert.equal(url.pathname+url.search,plan.path);plan.started.resolve();await plan.gate.promise;return route.fulfill({status:plan.status,contentType:'application/json',headers:{'Cache-Control':'no-store'},body:JSON.stringify(plan.body)});}
+    if(plan){assert.equal(url.pathname+url.search,plan.path);plan.started.resolve();await plan.gate.promise;await route.fulfill({status:plan.status,contentType:'application/json',headers:{'Cache-Control':'no-store'},body:JSON.stringify(plan.body)});plan.finished.resolve();return;}
    }
    if(!['GET','HEAD'].includes(request.method())){
     if(url.pathname==='/api/articles'&&request.method()==='POST'&&allowSave){allowSave=false;saves++;return route.continue();}
@@ -73,7 +73,7 @@ if(process.argv.includes('--list')){
    }
    return route.continue();
   });
-  return {context,page,gets,get saves(){return saves;},allowSave(){allowSave=true;},plan(path,status,body){const item={path,status,body,started:deferred(),gate:deferred()};plans.push(item);return {started:item.started.promise,release:()=>item.gate.resolve()};}};
+  return {context,page,gets,get saves(){return saves;},allowSave(){allowSave=true;},plan(path,status,body){const item={path,status,body,started:deferred(),gate:deferred(),finished:deferred()};plans.push(item);return {started:item.started.promise,finished:item.finished.promise,release:()=>item.gate.resolve()};}};
  }
  const path=cursor=>'/api/articles?'+new URLSearchParams({cursor});
  async function actualPage(cursor=null){const response=await fetch(origin+(cursor?path(cursor):'/api/articles'),{redirect:'error'});assert.equal(response.status,200);return response.json();}
@@ -138,12 +138,16 @@ if(process.argv.includes('--list')){
   scenario=planned[6];{
    const fixture=await contextFor(scenario),{page}=fixture;await page.goto(origin+'/admin');await settled(page,1,100);await page.locator('.draft-row').nth(1).click();await page.getByRole('button',{name:'Markdown',exact:true}).click();
    const first=await actualPage(),target=path(first.nextCursor),old=fixture.plan(target,200,await actualPage(first.nextCursor));
-   await older(page).click();await old.started;await page.locator('#markdown-body').fill('# 合成の保存する本文');fixture.allowSave();await page.getByRole('button',{name:'下書き保存',exact:true}).click();
+   await older(page).click();await old.started;
+   // The replacement refresh now aborts the obsolete GET before it responds.
+   const staleFailure=page.waitForEvent('requestfailed',request=>request.method()==='GET'&&new URL(request.url()).pathname+new URL(request.url()).search===target);
+   await page.locator('#markdown-body').fill('# 合成の保存する本文');fixture.allowSave();await page.getByRole('button',{name:'下書き保存',exact:true}).click();
    await page.locator('.notice').filter({hasText:'下書きに保存しました。'}).waitFor();await settled(page,1,100);
    assert.equal(fixture.saves,1);assert.equal(await dirty(page),false);const before=await snapshot(page);
    await page.locator('#markdown-body').fill('# 保存後の新しい未保存本文');const newerDraft=await snapshot(page);
-   const staleResponse=page.waitForResponse(response=>new URL(response.url()).pathname+new URL(response.url()).search===target);
-   old.release();await (await staleResponse).finished();await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   old.release();await old.finished;
+   assert.equal((await staleFailure).failure()?.errorText,'net::ERR_ABORTED');
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
    assert.deepEqual(await snapshot(page),newerDraft);assert.equal(await dirty(page),true);assert.equal(await page.locator('.page-summary').textContent(),'1ページ目 · 100件');assert.equal(await newer(page).isDisabled(),true);
    assert.ok(before.notice.includes('下書きに保存しました。'));assert.equal(fixture.gets.length,3);
    results.push({name:scenario,ok:true});await fixture.context.close();
