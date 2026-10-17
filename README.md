@@ -16,7 +16,7 @@ URLをMarkdownに変換し、本文だけを読みやすいHTMLとして公開�
 
 ## 現在の状態
 
-Cloudflare Workersへ直接デプロイするコードとテストです。リポジトリの `wrangler.jsonc` は本番向け設定（Workers Builds から `npx wrangler deploy` 用）です。実URL変換と本番ログインは未検証です。
+Cloudflare Workersへ直接デプロイするコードとテストです。リポジトリの `wrangler.jsonc` は本番向け設定（Workers Builds から `pnpm exec wrangler deploy` 用）です。実URL変換と本番ログインは未検証です。
 
 一般の公開HTTPS URLを、サイトごとの許可リストなしで取得するコードです。取得前と各転送先でCloudflareの公開DNSを確認し、非公開・特殊用途のIPを拒否します。本番のネットワーク境界と実際の変換はまだ検証していません。
 
@@ -42,13 +42,15 @@ Sitesや特定の他アプリのOAuth、APIトークンには依存しません�
 
 Node.js 24以上を使用します。
 
-1. `npm ci`
-2. `npm run check`（管理UIの型チェック、合成データのテスト、本番ビルド）
-3. 必要なら `npm run types` でWranglerから環境の型を生成
+pnpm 11.25.0を使用します。未導入なら `npm install --global pnpm@11.25.0` で固定版を準備してください。依存関係は `pnpm-lock.yaml` を正として、CIと同じfrozen installを使います。Node.jsの既存要件は変更しません。
+
+1. `pnpm install --frozen-lockfile`
+2. `pnpm run check`（管理UIの型チェック、合成データのテスト、本番ビルド）
+3. 必要なら `pnpm run types` でWranglerから環境の型を生成
 
 テストは合成記事・合成RSA鍵・SQLite・模擬AI bindingで実行します。固定版Miniflare/workerdのnative fetch試験も、外向き通信を合成handlerへ閉じ込め、実際のCloudflareアカウント・DNS・AIへ接続しません。外部記事を転載しません。
 
-画面の検証は `npm run build` の後、`npx --no-install playwright install --with-deps chromium` と `npm run test:browser` を実行します。固定版 Playwright の Chromium で、320/390/768/1440px、単一本文表示、キーボード、未保存の破棄確認、変換・連続保存・公開を確認します。API はループバック上の合成記事とメモリー内 SQLite だけを使用し、本番 Access・AI・D1 には接続しません。結果と架空データのスクリーンショットは `.sites-runtime/browser/` に保存します。既存 CI の同じジョブで実行し、成果物の保持は3日です。
+画面の検証は `pnpm run build` の後、`pnpm exec playwright install --with-deps chromium` と `pnpm run test:browser` を実行します。固定版 Playwright の Chromium で、320/390/768/1440px、単一本文表示、キーボード、未保存の破棄確認、変換・連続保存・公開を確認します。API はループバック上の合成記事とメモリー内 SQLite だけを使用し、本番 Access・AI・D1 には接続しません。結果と架空データのスクリーンショットは `.sites-runtime/browser/` に保存します。既存 CI の同じジョブで実行し、成果物の保持は3日です。
 
 ## 保存記事のページ切替
 
@@ -62,7 +64,7 @@ Node.js 24以上を使用します。
 
 複数タブ・別端末で一覧の途中に保存すると、更新された記事は新しい位置へ移動します。一覧全体を同一時点に固定する仕組みではありません。最新状態から見直す場合は新しい記事のページに戻るか、管理画面を開き直してください。
 
-ページ切替のbrowser回帰は、205件の合成SQLite記事と実際にビルドしたWorker・エディターを使い、既存の `npm run test:browser` で実行します。新しいページ試験だけの予定は `node tests/browser/article-pagination.mjs --list` で確認できます。予定の表示は画面の実行結果ではありません。
+ページ切替のbrowser回帰は、205件の合成SQLite記事と実際にビルドしたWorker・エディターを使い、既存の `pnpm run test:browser` で実行します。新しいページ試験だけの予定は `node tests/browser/article-pagination.mjs --list` で確認できます。予定の表示は画面の実行結果ではありません。
 
 ## 本番セットアップ
 
@@ -72,14 +74,14 @@ Node.js 24以上を使用します。
 2. AI bindingは `wrangler.jsonc` の `ai` binding で接続
 3. 1つの管理用Accessアプリで `/admin` と `/api/*` の両方を保護し、同じAUDを使用。許可する所有者は1人だけ。公開記事ルート `/p/*` はAccessで囲わない
 4. `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` は `wrangler.jsonc` の `vars`。`OWNER_EMAIL` は Worker **secret**（`wrangler secret put OWNER_EMAIL` など）で別途設定し、リポジトリに書かない
-5. `global_fetch_strictly_public` を維持し、VPC・内部サービス・Browser Run・proxyのbindingを追加しない。`npm run deploy` または CI の `npx wrangler deploy` 前に `node scripts/require-config.mjs` の preflight を通す
+5. `global_fetch_strictly_public` を維持し、VPC・内部サービス・Browser Run・proxyのbindingを追加しない。`pnpm run deploy` または CI の `pnpm exec wrangler deploy` 前に `node scripts/require-config.mjs` の preflight を通す
 6. 匿名・別ユーザー・偽造JWTの拒否と、所有者の編集を本番で検証してから運用
 
-ローカルだけ別設定にする場合は `wrangler.example.jsonc` を `wrangler.local.jsonc` にコピーして `npm run dev` を使います（`wrangler.local.jsonc` は gitignore 済み）。
+ローカルだけ別設定にする場合は `wrangler.example.jsonc` を `wrangler.local.jsonc` にコピーして `pnpm run dev` を使います（`wrangler.local.jsonc` は gitignore 済み）。
 
 テンプレートのCPU上限は10msです。これは利用料金の上限ではありません。Worker/D1/AIはそれぞれ無料枠と課金条件があり、全体が無料と確認したものではありません。
 
-`workers.dev` とpreview URLは既定で無効です。`npm run deploy` は未設定のD1/routeを検出して止まります。ソースの公開やPR作成は、本番設定変更・デプロイ・認証権限の作成を意味しません。
+`workers.dev` とpreview URLは既定で無効です。`pnpm run deploy` は未設定のD1/routeを検出して止まります。ソースの公開やPR作成は、本番設定変更・デプロイ・認証権限の作成を意味しません。
 
 ## URL取得と変換の制限
 
