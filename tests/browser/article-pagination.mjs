@@ -17,6 +17,9 @@ const planned=[
  'failed older page: unchanged dirty draft, exact retry and repeated-click single-flight',
  'malformed page metadata: retained rows and recovery without partial commit',
  'save while older page is pending: newest-page acknowledgement wins over stale reply',
+ ...[390,1440].map(width=>`${width}px: explicit global title search, filtered paging, keyboard, clear and complete dirty-draft preservation`),
+ 'search failure retries the failed query; newer search aborts stale headers without replacing the draft',
+ 'private save retains its search context when the saved title no longer matches',
 ];
 if(process.argv.includes('--list')){
  console.log(JSON.stringify({syntheticOnly:true,planned,executed:0},null,2));
@@ -151,6 +154,33 @@ if(process.argv.includes('--list')){
    assert.deepEqual(await snapshot(page),newerDraft);assert.equal(await dirty(page),true);assert.equal(await page.locator('.page-summary').textContent(),'1ページ目 · 100件');assert.equal(await newer(page).isDisabled(),true);
    assert.ok(before.notice.includes('下書きに保存しました。'));assert.equal(fixture.gets.length,3);
    results.push({name:scenario,ok:true});await fixture.context.close();
+  }
+  for(const width of [390,1440]){
+   scenario=planned[results.length];const fixture=await contextFor(scenario,width),{page}=fixture;
+   await page.goto(origin+'/admin');await settled(page,1,100);await page.locator('.draft-row').first().click();await page.getByRole('button',{name:'Markdown',exact:true}).click();
+   await page.locator('input[name="title"]').fill('検索しても残る未保存タイトル');await page.locator('#markdown-body').fill('# 検索しても残る未保存本文');await page.locator('#source-url').fill('https://example.org/unsaved-search');await page.locator('.rights-check input').check();const before=await snapshot(page);
+   const input=page.getByRole('searchbox',{name:'保存記事を探す',exact:true});
+   await input.fill('記事001');assert.equal(fixture.gets.length,1,'Typing must not query the database');await input.press('Enter');await settled(page,1,1);
+   assert.equal(await input.evaluate(element=>element===document.activeElement),true);assert.ok((await page.locator('.draft-row').textContent()).includes('記事001'));assert.deepEqual(await snapshot(page),before);assert.equal(await dirty(page),true);assert.ok((await page.locator('.search-status').textContent()).includes('記事001'));
+   const file=`search-${width}.png`;await page.screenshot({path:new URL(file,output).pathname,fullPage:true});screenshots.push({file,width,syntheticOnly:true});
+   await input.fill('合成');await input.press('Enter');await settled(page,1,100);await older(page).click();await settled(page,2,100);await older(page).click();await settled(page,3,5);assert.deepEqual(await snapshot(page),before);
+   assert.ok(fixture.gets.slice(-2).every(target=>new URL(target,origin).searchParams.get('q')==='合成'));await newer(page).click();await settled(page,2,100);
+   await page.getByRole('button',{name:'検索を解除',exact:true}).click();await settled(page,1,100);assert.equal(await input.inputValue(),'');assert.deepEqual(await snapshot(page),before);assert.equal(await dirty(page),true);
+   const bounds=await page.evaluate(()=>({width:innerWidth,body:document.body.scrollWidth,document:document.documentElement.scrollWidth}));assert.ok(bounds.body<=width&&bounds.document<=width,JSON.stringify(bounds));
+   for(const control of [input,page.getByRole('button',{name:'検索',exact:true}),page.getByRole('button',{name:'検索を解除',exact:true})]){const box=await control.boundingBox();assert.ok(box&&box.width>=44&&box.height>=44);}
+   assert.equal(fixture.saves,0);results.push({name:scenario,ok:true});await fixture.context.close();
+  }
+  scenario=planned[9];{
+   const fixture=await contextFor(scenario),{page}=fixture;await page.goto(origin+'/admin');await settled(page,1,100);await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();await page.locator('input[name="title"]').fill('残る未保存タイトル');await page.locator('#markdown-body').fill('# 残る未保存本文');await page.locator('.rights-check input').check();const before=await snapshot(page),rows=await page.locator('.draft-row').allTextContents(),input=page.locator('#article-search');
+   const target='/api/articles?'+new URLSearchParams({q:'記事001'}),failure=fixture.plan(target,503,{error:'Synthetic search unavailable'});await input.fill('記事001');await input.press('Enter');await failure.started;failure.release();await page.locator('.list-error').waitFor();assert.deepEqual(await page.locator('.draft-row').allTextContents(),rows);assert.ok((await page.locator('.list-error').textContent()).includes('記事001'));
+   await input.fill('まだ検索していない語');await page.getByRole('button',{name:'記事一覧を再読み込み',exact:true}).click();await settled(page,1,1);assert.equal(fixture.gets.at(-1),target);assert.equal(await input.inputValue(),'まだ検索していない語');assert.deepEqual(await snapshot(page),before);
+   const response=await fetch(origin+target,{redirect:'error'}),old=fixture.plan(target,200,await response.json());await input.fill('記事001');await input.press('Enter');await old.started;
+   const cancelled=page.waitForEvent('requestfailed',{predicate:request=>request.method()==='GET'&&request.url()===origin+target});cancelled.catch(()=>{});await input.fill('記事002');await input.press('Enter');await page.locator('.draft-row').filter({hasText:'記事002'}).waitFor();await settled(page,1,1);assert.equal((await cancelled).failure()?.errorText,'net::ERR_ABORTED');old.release();await old.finished;
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));assert.ok((await page.locator('.draft-row').textContent()).includes('記事002'));assert.deepEqual(await snapshot(page),before);assert.equal(fixture.saves,0);results.push({name:scenario,ok:true});await fixture.context.close();
+  }
+  scenario=planned[10];{
+   const fixture=await contextFor(scenario),{page}=fixture;await page.goto(origin+'/admin');await settled(page,1,100);const input=page.locator('#article-search');await input.fill('記事205');await input.press('Enter');await settled(page,1,1);await page.locator('.draft-row').click();await page.locator('input[name="title"]').fill('検索から外れる保存済みの合成メモ');fixture.allowSave();await page.getByRole('button',{name:'非公開で保存',exact:true}).click();await page.locator('.notice').filter({hasText:'下書きに保存しました。'}).waitFor();await settled(page,1,0);
+   assert.ok((await page.locator('.search-status').textContent()).includes('記事205'));assert.ok((await page.locator('.empty-list').textContent()).includes('一致'));assert.ok((await page.locator('.page-selection').textContent()).includes('編集中の内容はそのまま'));assert.equal(await page.locator('input[name="title"]').inputValue(),'検索から外れる保存済みの合成メモ');assert.equal(await dirty(page),false);assert.equal(fixture.saves,1);assert.equal(new URL(fixture.gets.at(-1),origin).searchParams.get('q'),'記事205');results.push({name:scenario,ok:true});await fixture.context.close();
   }
   assert.deepEqual(externalRequests,[]);assert.deepEqual(unexpectedMutations,[]);assert.deepEqual(pageErrors,[]);
   status='passed';report();console.log(JSON.stringify({status,results,screenshots},null,2));

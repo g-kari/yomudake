@@ -1,6 +1,6 @@
 import {verifyOwnerRequest} from './access.mjs';
 import {listArticles,listOwnerArticlePage,getArticle,saveArticle} from './storage.mjs';
-import {ArticlePageError,articleCursorFromUrl} from './article-pages.mjs';
+import {ArticlePageError,articleCursorFromUrl,articleQueryFromUrl} from './article-pages.mjs';
 import {sample} from './sample';
 import {markdownToHtmlWithOutline,markdownExternalLinks} from './export-html';
 import {articleLink,articleRevision,confirmationUrl,exportMarkdown} from './navigation.mjs';
@@ -40,7 +40,10 @@ export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}
    for(const [name,value] of Object.entries(headers))response.headers.set(name,value);
    return response;
   }
-  if(path==='/api/articles'&&request.method==='GET')return json(await listOwnerArticlePage(env,articleCursorFromUrl(url)));
+  if(path==='/api/articles'&&request.method==='GET'){
+   const query=articleQueryFromUrl(url);
+   return json(await listOwnerArticlePage(env,articleCursorFromUrl(url,query),query));
+  }
   if((path==='/api/articles'||path==='/api/convert')&&request.method==='POST'){
    if(!isSameOriginMutation(request))return json({error:'管理画面から操作してください。'},403);
    let data;try{const body=await readBounded(request,215000);data=JSON.parse(new TextDecoder().decode(body));}catch(error){if(error instanceof IngestError)return json({error:error.message},error.status);return json({error:'JSON入力が不正です。'},400);}

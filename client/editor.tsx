@@ -5,14 +5,15 @@ type ApiReply={error?:string;articles?:Article[];url?:string;id?:string;publishe
 import {Markdown} from '../src/markdown';
 import {sample} from '../src/sample';
 import {articleLink} from '../src/navigation.mjs';
-import {ARTICLE_PAGE_SIZE,decodeArticleCursor,encodeArticleCursor} from '../src/article-pages.mjs';
+import {ARTICLE_PAGE_SIZE,decodeArticleCursor,encodeArticleCursor,normalizeArticleQuery} from '../src/article-pages.mjs';
 import {ExternalWarning,type PendingLink} from './external-warning';
 type Article={id:string;title:string;source_url:string;markdown:string;published:number;created_at:string;updated_at:string;published_at:string|null};
-type PageTarget={cursor:string|null;history:(string|null)[]};
+type PageTarget={cursor:string|null;history:(string|null)[];query:string};
 const LIST_TIMEOUT_MS=15_000;
 const CONVERSION_TIMEOUT_MS=60_000;
-const firstPage=():PageTarget=>({cursor:null,history:[null]});
-function readArticlePage(raw:Record<string,unknown>){
+const firstPage=(query=''):PageTarget=>({cursor:null,history:[null],query});
+function readArticlePage(raw:Record<string,unknown>,query=''){
+ if(query?(raw.query!==query||!Object.hasOwn(raw,'nextCursor')):raw.query!==undefined&&raw.query!=='')throw new Error('Article search context unavailable');
  const records=raw.articles;
  if(!Array.isArray(records)||records.length>ARTICLE_PAGE_SIZE||!records.every(isArticle)||new Set(records.map(a=>a.id)).size!==records.length)throw new Error('Article list unavailable');
  // A bare list remains compatible with the previous API during deployment.
@@ -20,8 +21,8 @@ function readArticlePage(raw:Record<string,unknown>){
  if(Object.hasOwn(raw,'nextCursor')&&records.some((article,index)=>index>0&&(article.updated_at>records[index-1].updated_at||(article.updated_at===records[index-1].updated_at&&article.id>=records[index-1].id))))throw new Error('Article list order unavailable');
  if(cursor!==null){
   if(typeof cursor!=='string'||records.length!==ARTICLE_PAGE_SIZE)throw new Error('Article list unavailable');
-  decodeArticleCursor(cursor);
-  if(encodeArticleCursor(records[records.length-1])!==cursor)throw new Error('Article list unavailable');
+  decodeArticleCursor(cursor,query);
+  if(encodeArticleCursor(records[records.length-1],query)!==cursor)throw new Error('Article list unavailable');
  }
  return {records,nextCursor:cursor as string|null};
 }
@@ -33,13 +34,15 @@ function isArticle(value:unknown):value is Article{
 export default function Editor({signOutPath}:{signOutPath:string}) {
  const [articles,setArticles]=useState<Article[]>([]),[id,setId]=useState(''),[title,setTitle]=useState(sample.title),[markdown,setMarkdown]=useState(sample.markdown),[sourceUrl,setSourceUrl]=useState('');
  const [listPending,setListPending]=useState(true),[listLoaded,setListLoaded]=useState(false),[listError,setListError]=useState('');
+ const [searchInput,setSearchInput]=useState(''),[listQuery,setListQuery]=useState(''),[searchError,setSearchError]=useState('');
  const [pageHistory,setPageHistory]=useState<(string|null)[]>([null]),[nextCursor,setNextCursor]=useState<string|null>(null),[selectedMeta,setSelectedMeta]=useState<{id:string;created_at:string}|null>(null);
  const [dirty,setDirty]=useState(false);
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
  const draftVersion=useRef(0),rightsVersion=useRef<number|null>(null),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
  const renderedDraftVersion=draftVersion.current;
- const mounted=useRef(false),listRequest=useRef<{version:number;controller:AbortController}|null>(null),listElement=useRef<HTMLElement|null>(null);
+ const mounted=useRef(false),listRequest=useRef<{version:number;controller:AbortController;target:PageTarget}|null>(null),listElement=useRef<HTMLElement|null>(null);
+ const searchInputValue=useRef(''),requestedPage=useRef<PageTarget>(firstPage());
  const failedPage=useRef<PageTarget|null>(null);
  function draftChanged(){
   draftVersion.current++;
@@ -52,25 +55,26 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   listRequest.current?.controller.abort();
   const version=++listVersion.current;
   const controller=new AbortController();
-  const pending={version,controller};listRequest.current=pending;setListPending(true);
+  const pending={version,controller,target};listRequest.current=pending;requestedPage.current=target;setListPending(true);
   let timeout:number|undefined;
   const aborted=new Promise<never>((_,reject)=>controller.signal.addEventListener('abort',()=>reject(new Error('Article list unavailable')),{once:true}));
   timeout=window.setTimeout(()=>controller.abort(),LIST_TIMEOUT_MS);
   const isCurrent=()=>mounted.current&&active()&&version===listVersion.current;
   try{
-   const path=target.cursor?`/api/articles?${new URLSearchParams({cursor:target.cursor})}`:'/api/articles';
+   const parameters=new URLSearchParams();if(target.cursor)parameters.set('cursor',target.cursor);if(target.query)parameters.set('q',target.query);
+   const path=parameters.size?`/api/articles?${parameters}`:'/api/articles';
    // The deadline covers headers and JSON, even when a transport ignores abort.
    const {r,raw}=await Promise.race([(async()=>{const r=await fetch(path,{cache:'no-store',signal:controller.signal});const raw:unknown=await r.json();return {r,raw};})(),aborted]);
    if(!isCurrent())return false;
    if(!r.ok||!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('Article list unavailable');
-   const page=readArticlePage(raw as Record<string,unknown>);
+   const page=readArticlePage(raw as Record<string,unknown>,target.query);
    if(target.cursor){
-    const position=decodeArticleCursor(target.cursor);
+    const position=decodeArticleCursor(target.cursor,target.query);
     if(page.records.some(article=>article.updated_at>position.updatedAt||(article.updated_at===position.updatedAt&&article.id>=position.id)))throw new Error('Article page boundary unavailable');
    }
    if(page.nextCursor&&target.history.includes(page.nextCursor))throw new Error('Article page did not advance');
-   setArticles(page.records);setNextCursor(page.nextCursor);setPageHistory(target.history);setListLoaded(true);setListError('');failedPage.current=null;return true;
-  }catch(e){if(isCurrent()){failedPage.current=target;setListError('記事一覧を読み込めませんでした。編集中の内容は残っています。');throw e;}}
+   setArticles(page.records);setNextCursor(page.nextCursor);setPageHistory(target.history);setListQuery(target.query);setListLoaded(true);setListError('');failedPage.current=null;return true;
+  }catch(e){if(isCurrent()){failedPage.current=target;setListError(target.query?`「${target.query}」の検索結果を読み込めませんでした。直前の一覧と編集中の内容は残っています。`:'記事一覧を読み込めませんでした。編集中の内容は残っています。');throw e;}}
   finally{window.clearTimeout(timeout);if(isCurrent()&&listRequest.current===pending){listRequest.current=null;setListPending(false);}}
  }
  useEffect(()=>{let active=true;load(()=>active).catch(()=>{});return ()=>{active=false;};},[]);
@@ -79,13 +83,23 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  async function retryList(trigger:HTMLButtonElement){
   if(!mounted.current||listRequest.current||saving.current||conversion.current)return;
   const restoreFocus=document.activeElement===trigger,version=listVersion.current+1;
-  const succeeded=await load(()=>mounted.current,failedPage.current||firstPage()).catch(()=>false);
+  const succeeded=await load(()=>mounted.current,failedPage.current||firstPage(requestedPage.current.query)).catch(()=>false);
   if(succeeded&&mounted.current&&version===listVersion.current&&restoreFocus&&(document.activeElement===trigger||document.activeElement===document.body))listElement.current?.focus();
  }
  async function changePage(target:PageTarget,trigger:HTMLButtonElement){
   if(!mounted.current||listRequest.current||saving.current||conversion.current)return;
   const restoreFocus=document.activeElement===trigger,version=listVersion.current+1;
   const succeeded=await load(()=>mounted.current,target).catch(()=>false);
+  if(succeeded&&mounted.current&&version===listVersion.current&&restoreFocus&&(document.activeElement===trigger||document.activeElement===document.body))listElement.current?.focus();
+ }
+ async function searchArticles(value:string,trigger:Element|null){
+  if(!mounted.current||saving.current||conversion.current)return;
+  let query:string;try{query=normalizeArticleQuery(value);}catch{setSearchError('検索は100文字以内で入力してください。');return;}
+  setSearchError('');
+  // Submitting a different query may replace a pending GET, never a save.
+  if(listRequest.current?.target.query===query&&listRequest.current.target.cursor===null)return;
+  const restoreFocus=trigger?.tagName==='BUTTON'&&document.activeElement===trigger,version=listVersion.current+1;
+  const succeeded=await load(()=>mounted.current,firstPage(query)).catch(()=>false);
   if(succeeded&&mounted.current&&version===listVersion.current&&restoreFocus&&(document.activeElement===trigger||document.activeElement===document.body))listElement.current?.focus();
  }
  useEffect(()=>{function warn(e:BeforeUnloadEvent){if(dirty){e.preventDefault();e.returnValue='';}}window.addEventListener('beforeunload',warn);return ()=>window.removeEventListener('beforeunload',warn);},[dirty]);
@@ -113,7 +127,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
    if(data.id!==articleId||data.published!==makePublic||data.url!==`/p/${articleId}`)throw new Error('保存結果を確認できませんでした。本文は残っています。');
    if(draftVersion.current===pending.version)setDirty(false);
    setPublished(makePublic);setShareUrl(makePublic?`${window.location.origin}${data.url}`:'');setMessage(savedMessage());
-   try{await load(active);if(active())setMessage(savedMessage());}
+   try{await load(active,firstPage(requestedPage.current.query));if(active())setMessage(savedMessage());}
    catch{if(active())setMessage(`${savedMessage()} 記事一覧の状態は一覧欄で確認できます。`);}
   }catch(e){if(active())setMessage(e instanceof Error?e.message:'保存できませんでした。本文は残っています。');}
   finally{if(active()){saving.current=null;setBusy(false);}}
@@ -169,21 +183,29 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   </section>
   <aside className="sidebar" aria-label="記事の一覧">
    <div className="sidebar-heading"><h1>記事</h1><button className="new-button" onClick={createNew} disabled={busy}>＋ 新しい下書き</button></div>
+   <form className="article-search" role="search" aria-label="保存記事の検索" onSubmit={e=>{e.preventDefault();searchArticles(searchInputValue.current,document.activeElement);}}>
+    <label htmlFor="article-search">保存記事を探す</label>
+    <input id="article-search" name="q" type="search" value={searchInput} maxLength={100} disabled={busy} placeholder="タイトル・元URL" autoComplete="off" aria-describedby="article-search-guidance" onChange={e=>{searchInputValue.current=e.target.value;setSearchInput(e.target.value);setSearchError('');}}/>
+    <div className="search-actions"><button className="secondary-button" type="submit" disabled={busy}>検索</button><button className="secondary-button" type="button" disabled={busy||(!searchInput&&!requestedPage.current.query&&!listQuery)} onClick={e=>{searchInputValue.current='';setSearchInput('');searchArticles('',e.currentTarget);}}>検索を解除</button></div>
+    <p id="article-search-guidance">すべての保存記事のタイトル・元URLを部分一致で探します。入力だけでは検索しません。</p>
+    {searchError&&<p className="search-feedback" role="alert">{searchError}</p>}
+   </form>
    {listPending&&<p className="list-feedback" role="status">記事一覧を読み込んでいます…</p>}
    {listError&&<div className="list-feedback list-error" role="alert"><p>{listError}</p><button className="secondary-button" type="button" onClick={e=>retryList(e.currentTarget)} disabled={listPending||busy}>記事一覧を再読み込み</button></div>}
+   {listLoaded&&<p className="search-status" role="status" aria-live="polite">{listQuery?`検索結果:「${listQuery}」`:'保存したすべての記事'}</p>}
    <nav className="draft-list" aria-label="保存した記事" aria-busy={listPending} tabIndex={-1} ref={listElement}>
     {articles.length?articles.map(a=><button key={a.id} className={`draft-row ${id===a.id?'selected':''}`} aria-current={id===a.id?'true':undefined} onClick={()=>openArticle(a)} disabled={busy}>
      <span className={`status-dot ${a.published?'live':''}`} aria-hidden="true"/>
      <span>{a.title}<small>{a.published?'公開中':'下書き'} · {a.updated_at.slice(0,10)}</small></span>
-    </button>):listLoaded&&!listPending&&!listError?<p className="empty-list">{pageHistory.length===1?'保存した記事はここに並びます。新しい下書きから始められます。':'このページの記事はありません。「新しい記事のページ」で戻れます。'}</p>:null}
+    </button>):listLoaded&&!listPending&&!listError?<p className="empty-list">{listQuery?'一致する保存記事はありません。別の言葉で検索するか、検索を解除してください。':pageHistory.length===1?'保存した記事はここに並びます。新しい下書きから始められます。':'このページの記事はありません。「新しい記事のページ」で戻れます。'}</p>:null}
    </nav>
    {listLoaded&&<div className="list-pagination" role="group" aria-label="記事一覧のページ切替">
     <p className="page-summary" role="status" aria-live="polite">{pageHistory.length}ページ目 · {articles.length}件{listPending?' · 読み込み中':''}</p>
     <div className="page-actions">
-     <button className="secondary-button" type="button" disabled={listPending||busy||pageHistory.length===1} onClick={e=>{const history=pageHistory.slice(0,-1);changePage({cursor:history[history.length-1],history},e.currentTarget);}}>新しい記事のページ</button>
-     <button className="secondary-button" type="button" disabled={listPending||busy||!nextCursor} onClick={e=>{if(nextCursor)changePage({cursor:nextCursor,history:[...pageHistory,nextCursor]},e.currentTarget);}}>以前の記事のページ</button>
+     <button className="secondary-button" type="button" disabled={listPending||busy||pageHistory.length===1} onClick={e=>{const history=pageHistory.slice(0,-1);changePage({cursor:history[history.length-1],history,query:listQuery},e.currentTarget);}}>新しい記事のページ</button>
+     <button className="secondary-button" type="button" disabled={listPending||busy||!nextCursor} onClick={e=>{if(nextCursor)changePage({cursor:nextCursor,history:[...pageHistory,nextCursor],query:listQuery},e.currentTarget);}}>以前の記事のページ</button>
     </div>
-    {selectedMeta?.id===id&&!articles.some(a=>a.id===id)&&<p className="page-selection">選択中の記事はこのページにありません。編集中の内容はそのままです。</p>}
+    {id&&!articles.some(a=>a.id===id)&&<p className="page-selection">選択中の記事はこのページにありません。編集中の内容はそのままです。</p>}
    </div>}
    <div className="sidebar-footer"><a href="/" target="_blank" rel="noopener noreferrer">公開ページを開く ↗</a><a href={signOutPath} target="_top">サインアウト</a></div>
   </aside>
