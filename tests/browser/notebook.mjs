@@ -111,12 +111,12 @@ async function conversionDeadlineChecks(browser){
    await page.goto(origin+'/admin');
    await page.getByRole('button',{name:/合成の公開済み記事/}).click();
    await page.clock.pauseAt(new Date('2026-10-17T13:00:00Z'));
-   await page.locator('.rights-check input').check();
    if(transport==='headers'){
     await page.getByRole('button',{name:'Markdown',exact:true}).click();
     await page.locator('input[name="title"]').fill('変換前の未保存タイトル');
     await page.locator('#markdown-body').fill('# 変換前の未保存本文\n\n期限を過ぎても残ります。');
    }
+   await page.locator('.rights-check input').check();
    if(width===1440)await page.getByRole('button',{name:'プレビュー',exact:true}).click();
    else await page.getByRole('button',{name:'Markdown',exact:true}).click();
    const before=await snapshot(page);
@@ -227,6 +227,21 @@ try {
  await page.locator('#markdown-body').fill('# 新しい本文\n\n編集のあとも残る。');
  await page.getByRole('button',{name:'プレビュー',exact:true}).click();assert.ok((await page.locator('#preview-panel').textContent()).includes('新しい本文'));
  await page.screenshot({path:out+'desktop-edited-preview.png',fullPage:true});
+ for(const width of [390,1440]){
+  await page.setViewportSize({width,height:1000});
+  for(const [selector,value] of [['input[name="title"]','確認後の合成タイトル '+width],['#markdown-body','# 確認後の合成本文 '+width],['#source-url','https://example.org/confirmation-'+width]]){
+   await page.locator('.rights-check input').check();await page.getByRole('button',{name:'Markdown',exact:true}).click();await page.locator(selector).fill(value);
+   assert.equal(await page.locator('.rights-check input').isChecked(),false);assert.equal(await page.getByRole('button',{name:'公開する',exact:true}).isDisabled(),true);
+   assert.equal(await page.getByRole('button',{name:'下書き保存',exact:true}).isEnabled(),true);
+   assert.equal(await page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;}),true);
+  }
+  await page.locator('.rights-check input').check();await page.getByRole('button',{name:'プレビュー',exact:true}).click();await page.getByRole('button',{name:'Markdown',exact:true}).click();await page.locator('input[name="title"]').focus();await page.locator('input[name="title"]').fill(await page.locator('input[name="title"]').inputValue());
+  assert.equal(await page.locator('.rights-check input').isChecked(),true);assert.equal(await page.getByRole('button',{name:'公開する',exact:true}).isEnabled(),true);
+  await page.screenshot({path:out+`publication-confirmation-${width}.png`,fullPage:true});results.push({name:`content edits invalidate publication confirmation; no-op/focus/tabs preserve it and private save remains usable at ${width}px`,ok:true});
+ }
+ await page.locator('#markdown-body').fill('# 新しい本文\n\n編集のあとも残る。');
+ await page.getByRole('button',{name:'プレビュー',exact:true}).click();
+ await page.setViewportSize({width:1440,height:1100});
  page.once('dialog',d=>d.dismiss());await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();assert.ok((await page.locator('#markdown-body').inputValue()).includes('新しい本文'));
  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();assert.equal(await page.locator('#markdown-body').inputValue(),'');assert.equal(await page.locator('#markdown-panel').isVisible(),true);
  const failedSource='https://x.com/synthetic/status/123?s=20';
@@ -253,6 +268,7 @@ try {
  await page.locator('.rights-check input').check();await page.getByRole('button',{name:'公開する',exact:true}).click();await page.getByRole('status').filter({hasText:'公開しました'}).waitFor();
  assert.equal(await page.locator('.document-status').textContent(),'公開中');assert.equal(await page.getByRole('button',{name:'非公開で保存',exact:true}).isEnabled(),true);
  await page.getByRole('button',{name:'Markdown',exact:true}).click();await page.locator('#markdown-body').fill('# 未保存の架空本文\n\n[架空の参考リンク](https://example.org/reference) [サイト内の記事](/p/sample-safe-reading)');await page.getByRole('button',{name:'プレビュー',exact:true}).click();
+ assert.equal(await page.locator('.rights-check input').isChecked(),false);assert.equal(await page.getByRole('button',{name:'公開内容を更新',exact:true}).isDisabled(),true);
  const draftBefore=await page.evaluate(()=>({title:document.querySelector('input[name="title"]').value,body:document.querySelector('#markdown-body').value,source:document.querySelector('#source-url').value,rights:document.querySelector('.rights-check input').checked,status:document.querySelector('.document-status').textContent}));
  const sourceButton=page.locator('.document-source button');assert.equal(await sourceButton.getAttribute('href'),null);
  await sourceButton.click();const dialog=page.getByRole('dialog');await dialog.waitFor({state:'visible'});
