@@ -12,14 +12,15 @@ import {createRoot} from 'react-dom/client';
 import Editor from './client/editor';
 window.IS_REACT_ACT_ENVIRONMENT=true;
 const saved={id:'c276dbe0-bdb7-47e0-8e6c-adfa3f8a7d8d',title:'Saved fixture',source_url:'https://source.example.test/saved',markdown:'# Saved body',published:1,created_at:'2026-10-09T00:00:00Z',updated_at:'2026-10-09T00:00:00Z',published_at:'2026-10-09T00:00:00Z'};
-let root,posts=[],lists=[],conversions=[],deferInitial=false;
+let root,posts=[],lists=[],conversions=[],deferInitial=false,capability=()=>Response.json({protocol:'compare-v1'});
 window.confirm=()=>true;
 window.fetch=(url,options={})=>{
+ if(url==='/api/editor/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(capability());
  if(url==='/api/articles'&&(!options.method||options.method==='GET')){
   if(!deferInitial&&!lists.length){lists.push({initial:true});return Promise.resolve(Response.json({articles:[saved]}));}
   return new Promise((resolve,reject)=>{lists.push({url,options,resolve,reject});});
  }
- if(url==='/api/articles'&&options.method==='POST')return new Promise((resolve,reject)=>{posts.push({url,options,resolve,reject});});
+ if(url==='/api/editor/articles'&&options.method==='POST')return new Promise((resolve,reject)=>{posts.push({url,options,resolve,reject});});
  if(url==='/api/convert'&&options.method==='POST')return new Promise((resolve,reject)=>{conversions.push({url,options,resolve,reject});});
  throw new Error('Unexpected request: '+url);
 };
@@ -33,12 +34,24 @@ const rights=()=>element('.rights-check input');
 const values=()=>({title:title().value,body:body().value,url:url().value,rights:rights().checked});
 const equal=(actual,expected,label)=>check(JSON.stringify(actual)===JSON.stringify(expected),label+': '+JSON.stringify(actual)+' != '+JSON.stringify(expected));
 const unloadWarns=()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;};
-async function click(text){await act(async()=>{button(text).click();});}
+async function click(text){
+ const target=button(text),previous=posts.length,wasEnabled=!target.disabled;
+ await act(async()=>{button(text).click();});
+ // WebCrypto is a real asynchronous dependency before the deferred POST.
+ // Wait for that observable boundary, not an arbitrary sleep or mocked digest.
+ if(wasEnabled&&['下書き保存','公開する','公開内容を更新','非公開で保存'].includes(text)){
+  const deadline=Date.now()+1000;
+  while(posts.length===previous&&target.disabled&&!document.querySelector('.notice')?.textContent){
+   check(Date.now()<deadline,'Save did not reach POST or a visible error');
+   await act(async()=>{await new Promise(resolve=>setImmediate(resolve));});
+  }
+ }
+}
 async function edit(selector,value){await act(async()=>{const target=element(selector);const prototype=target instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value').set.call(target,value);target.dispatchEvent(new Event('input',{bubbles:true}));});}
-async function setup(defer=false){posts=[];lists=[];conversions=[];deferInitial=defer;root=createRoot(element('#root'));await act(async()=>{root.render(<Editor signOutPath="/synthetic-signout"/>);});}
+async function setup(defer=false){capability=()=>Response.json({protocol:'compare-v1'});posts=[];lists=[];conversions=[];deferInitial=defer;root=createRoot(element('#root'));await act(async()=>{root.render(<Editor signOutPath="/synthetic-signout"/>);});}
 async function newDraft(){await click('＋ 新しい下書き');await edit('input[name="title"]','My edited title');await edit('#markdown-body','# My edited body');await edit('#source-url','https://source.example.test/new');}
 const sent=index=>JSON.parse(posts[index].options.body);
-async function acknowledge(index=0,data,status=200){const input=sent(index);await act(async()=>{posts[index].resolve(Response.json(data===undefined?{id:input.id,published:input.published,url:'/p/'+input.id}:data,{status}));});}
+async function acknowledge(index=0,data,status=200){const input=sent(index);await act(async()=>{posts[index].resolve(Response.json(data===undefined?{protocol:'compare-v1',revision:'a'.repeat(64),id:input.id,published:input.published,url:'/p/'+input.id}:data,{status}));});}
 async function listReply(index,articles=[saved],status=200){await act(async()=>{lists[index].resolve(Response.json(status===200?{articles}:{error:'Synthetic list failure'},{status}));});}
 async function rejectPost(index,message){await act(async()=>{posts[index].reject(new Error(message));});}
 const tests=[
@@ -136,7 +149,26 @@ const tests=[
  }],
  ['unmount invalidates a save and its late success cannot reach a new editor',async()=>{
   await newDraft();await click('下書き保存');const old=posts[0],input=sent(0);await act(async()=>{root.unmount();});root=null;await setup();const before=values();await act(async()=>{old.resolve(Response.json({id:input.id,published:false,url:'/p/'+input.id}));});equal(values(),before,'Unmounted save changed new editor');check(lists.length===1,'Unmounted save refreshed new editor');check(!url().disabled,'Old save locked new editor');
- }]
+ }],
+ ['old server capability failure never sends an unsafe legacy or editor POST',async()=>{
+  await newDraft();capability=()=>Response.json({error:'old server'},{status:404});await click('下書き保存');
+  check(posts.length===0,'Old server received a mutation');check(unloadWarns(),'Unsupported save cleared dirty');check(body().value==='# My edited body','Unsupported save lost body');check(element('.notice').textContent.includes('保存リクエストは送っていません'),'No-write result not explicit');
+ }],
+ ['wrong capability protocol fails before POST and keeps draft',async()=>{
+  await newDraft();capability=()=>Response.json({protocol:'different'});await click('下書き保存');check(posts.length===0&&unloadWarns(),'Wrong protocol wrote or cleared dirty');
+ }],
+ ['conflict refreshes only the list and never advances stale draft baseline',async()=>{
+  await click('Saved fixture公開中 · 2026-10-09');await edit('#markdown-body','# Local conflicting body');await click('非公開で保存');
+  const baseline=sent(0).expectedRevision;check(typeof baseline==='string'&&baseline.length===64,'Existing row missing full revision');
+  await acknowledge(0,{error:'Synthetic conflict; draft remains',code:'EDITOR_CONFLICT'},409);await listReply(1,[{...saved,title:'Latest title',markdown:'# Other writer body'}]);
+  check(body().value==='# Local conflicting body'&&unloadWarns(),'Conflict list refresh changed draft or dirty');check(button('Latest title公開中 · 2026-10-09'),'Latest row not reachable');
+  await click('非公開で保存');check(sent(1).expectedRevision===baseline,'List refresh advanced stale baseline');
+  await acknowledge(1,{error:'Synthetic conflict; draft remains',code:'EDITOR_CONFLICT'},409);await listReply(2,[{...saved,title:'Latest title',markdown:'# Other writer body'}]);
+  let confirmations=0;window.confirm=()=>{confirmations++;return false;};await click('Latest title公開中 · 2026-10-09');check(confirmations===1&&body().value==='# Local conflicting body','Reopen did not protect dirty draft');
+  window.confirm=()=>true;await click('Latest title公開中 · 2026-10-09');check(body().value==='# Other writer body'&&!unloadWarns(),'Explicit confirmed reopen did not use latest row');
+  await edit('#markdown-body','# Reconciled local body');await click('非公開で保存');check(sent(2).expectedRevision!==baseline,'Explicit latest reopen kept obsolete baseline');await acknowledge(2);await listReply(3);
+ }],
+
 ];
 const results=[];
 async function run(){for(const [name,operation,defer] of tests){try{await setup(Boolean(defer));await operation();results.push({name,ok:true});}catch(error){results.push({name,ok:false,error:error.stack||String(error)});}finally{if(root){await act(async()=>{root.unmount();});root=null;}}}document.querySelector('#result').textContent=JSON.stringify({results});}
@@ -157,7 +189,7 @@ test('actual Editor save handlers protect current revisions with synthetic API r
   await window.editorSaveTestDone;
   const report=JSON.parse(window.document.querySelector('#result').textContent);
   assert.ok(!report.fatal,report.fatal);
-  assert.equal(report.results.length,29,'Incomplete save coverage');
+  assert.equal(report.results.length,32,'Incomplete save coverage');
   for(const result of report.results)await t.test(result.name,()=>assert.equal(result.ok,true,result.error));
  }finally{
   await window.happyDOM.close();

@@ -59,7 +59,7 @@ async function conversionDeadlineChecks(browser){
    const request=route.request(),url=new URL(request.url());
    const record={method:request.method(),url:url.href};evidence.requests.push(record);
    if(url.origin!==origin){evidence.externalRequests.push(record);return route.abort('blockedbyclient');}
-   if(url.pathname.startsWith('/api/articles')&&!['GET','HEAD'].includes(request.method()))articleWrites++;
+   if(['/api/articles','/api/editor/articles'].includes(url.pathname)&&!['GET','HEAD'].includes(request.method()))articleWrites++;
    if(url.pathname==='/api/articles'&&!url.search&&request.method()==='GET'){
     listGets++;
     return route.fulfill({contentType:'application/json',body:JSON.stringify({articles:[article]})});
@@ -263,7 +263,7 @@ try {
  }
  await page.setViewportSize({width:1440,height:1100});page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();
  await page.locator('#source-url').fill('https://example.org/new');await page.getByRole('button',{name:'URLから変換',exact:true}).click();await page.getByRole('status').filter({hasText:'Markdownに変換しました'}).waitFor();assert.equal(await page.locator('#preview-panel').isVisible(),true);
- let postCount=0;page.on('request',r=>{if(r.url().endsWith('/api/articles')&&r.method()==='POST')postCount++;});
+ let postCount=0;page.on('request',r=>{if(r.url().endsWith('/api/editor/articles')&&r.method()==='POST')postCount++;});
  await page.getByRole('button',{name:'下書き保存',exact:true}).evaluate(b=>{b.click();b.click();});await page.getByRole('status').filter({hasText:'下書きに保存しました'}).waitFor();assert.equal(postCount,1);
  await page.locator('.rights-check input').check();await page.getByRole('button',{name:'公開する',exact:true}).click();await page.getByRole('status').filter({hasText:'公開しました'}).waitFor();
  assert.equal(await page.locator('.document-status').textContent(),'公開中');assert.equal(await page.getByRole('button',{name:'非公開で保存',exact:true}).isEnabled(),true);

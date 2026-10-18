@@ -1,3 +1,4 @@
+import {EDITOR_SAVE_PROTOCOL,saveEditorArticle} from './editor-save.mjs';
 import {verifyOwnerRequest} from './access.mjs';
 import {listArticles,listOwnerArticlePage,getArticle,saveArticle} from './storage.mjs';
 import {ArticlePageError,articleCursorFromUrl,articleQueryFromUrl} from './article-pages.mjs';
@@ -43,6 +44,16 @@ export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}
   if(path==='/api/articles'&&request.method==='GET'){
    const query=articleQueryFromUrl(url);
    return json(await listOwnerArticlePage(env,articleCursorFromUrl(url,query),query));
+  }
+  if(path==='/api/editor/articles'&&request.method==='GET')return json({protocol:EDITOR_SAVE_PROTOCOL});
+  if(path==='/api/editor/articles'&&request.method==='POST'){
+   if(!isSameOriginMutation(request))return json({error:'管理画面から操作してください。'},403);
+   let data;try{data=JSON.parse(new TextDecoder().decode(await readBounded(request,215000)));}catch(error){if(error instanceof IngestError)return json({error:error.message},error.status);return json({error:'JSON入力が不正です。'},400);}
+   if(data?.protocol!==EDITOR_SAVE_PROTOCOL||!(data.expectedRevision===null||typeof data.expectedRevision==='string'&&/^[0-9a-f]{64}$/.test(data.expectedRevision)))return json({error:'編集保存の確認情報が不正です。'},400);
+   const result=validateArticleInput(data);if(!result.article)return json({error:result.error},400);
+   const revision=await saveEditorArticle(env,result.article,data.expectedRevision);
+   if(revision===null)return json({error:'この記事は別の操作で更新されています。編集中の内容はこの画面に残っています。一覧から最新の記事を開き直し、内容を確認してください。',code:'EDITOR_CONFLICT'},409);
+   return json({protocol:EDITOR_SAVE_PROTOCOL,revision,id:result.article.id,published:result.article.published,url:`/p/${result.article.id}`});
   }
   if((path==='/api/articles'||path==='/api/convert')&&request.method==='POST'){
    if(!isSameOriginMutation(request))return json({error:'管理画面から操作してください。'},403);
