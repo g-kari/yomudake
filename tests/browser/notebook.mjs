@@ -67,7 +67,7 @@ async function localDraftExportChecks(browser){
    assert.equal(writes+(await page.evaluate(()=>window.__localExportWrites||0)),phase==='idle'?0:1,'No replay of unknown POST');
    assert.equal(await action.evaluate(el=>el===document.activeElement),true,'Focus stays on export action');
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'No page overflow');
-   assert.ok((await page.locator('[aria-label="編集中の本文の書き出し"]').textContent()).includes('サーバーへの保存・公開は行っていません'));
+   assert.ok((await page.locator('[aria-label="編集中の本文の書き出し"]').textContent()).includes('保存中の処理の結果を示すものではありません'));
    await page.screenshot({path:out+`local-export-${phase}-${width}.png`,fullPage:false});
    if(phase==='idle'){
     await page.locator('#markdown-body').fill(body+'\n更新した本文');const next=page.waitForEvent('download');await action.click();const repeated=await next;

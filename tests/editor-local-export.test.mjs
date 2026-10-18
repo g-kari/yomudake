@@ -48,7 +48,7 @@ const originalCreate=URL.createObjectURL,originalRevoke=URL.revokeObjectURL,orig
 URL.createObjectURL=blob=>{if(failAt==='create')throw new Error('private local error');const href='blob:synthetic-'+snapshots.length;snapshots.push({blob,href});return href;};
 URL.revokeObjectURL=href=>revoked.push(href);
 window.HTMLAnchorElement.prototype.click=function(){if(failAt==='click')throw new Error('private local error');clicks.push({href:this.href,download:this.download,connected:this.isConnected});};
-const exportSnapshot=async()=>{const before=values(),dirty=unloadWarns(),postCount=posts.length,listCount=lists.length;await click('Markdown本文を端末に書き出す');equal(values(),before,'Export changed draft values');check(unloadWarns()===dirty,'Export changed dirty warning');check(posts.length===postCount&&lists.length===listCount,'Export made network request');return snapshots.at(-1);};
+const exportSnapshot=async()=>{const before=values(),dirty=unloadWarns(),postCount=posts.length,listCount=lists.length;await click('Markdown本文を端末に書き出す');equal(values(),before,'Export changed draft values');check(unloadWarns()===dirty,'Export changed dirty warning');check(posts.length===postCount&&lists.length===listCount,'Export made network request');if(!failAt)check(document.querySelector('[aria-label="編集中の本文の書き出し"]').textContent.includes('保存中の処理の結果を示すものではありません'),'Export implied pending server outcome');return snapshots.at(-1);};
 const raw='# 合成の本文 🦊\n\n**raw** <script>not executed</script>\n\n末尾の空白  \n';
 check(raw.includes(String.fromCharCode(10)),'Fixture must include actual newlines');
 const tests=[

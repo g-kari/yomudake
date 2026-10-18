@@ -168,7 +168,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  async function copyUrl(){try{await navigator.clipboard.writeText(shareUrl);setMessage('共有URLをコピーしました。');}catch{setMessage('コピーできませんでした。表示されたURLを選択してコピーしてください。');}}
  function exportBody(){
   const body=currentMarkdown.current;if(!body.length)return;
-  try{downloadMarkdownBody(body);setExportMessage('本文の書き出しを開始しました。端末側でファイルの保存を確認してください。サーバーへの保存・公開は行っていません。');}
+  try{downloadMarkdownBody(body);setExportMessage('本文の書き出しを開始しました。端末側でファイルの保存を確認してください。この操作ではサーバーへ保存・公開しません。保存中の処理の結果を示すものではありません。');}
   catch{setExportMessage('本文を書き出せませんでした。本文はこの画面に残っています。');}
  }
  const selectedArticle=articles.find(a=>a.id===id)||(selectedMeta?.id===id?selectedMeta:null);
