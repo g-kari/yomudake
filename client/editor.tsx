@@ -7,6 +7,7 @@ import {sample} from '../src/sample';
 import {articleLink} from '../src/navigation.mjs';
 import {ARTICLE_PAGE_SIZE,decodeArticleCursor,encodeArticleCursor,normalizeArticleQuery} from '../src/article-pages.mjs';
 import {ExternalWarning,type PendingLink} from './external-warning';
+import {downloadMarkdownBody} from './local-markdown';
 type Article={id:string;title:string;source_url:string;markdown:string;published:number;created_at:string;updated_at:string;published_at:string|null};
 type PageTarget={cursor:string|null;history:(string|null)[];query:string};
 const LIST_TIMEOUT_MS=15_000;
@@ -37,6 +38,9 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  const [searchInput,setSearchInput]=useState(''),[listQuery,setListQuery]=useState(''),[searchError,setSearchError]=useState('');
  const [pageHistory,setPageHistory]=useState<(string|null)[]>([null]),[nextCursor,setNextCursor]=useState<string|null>(null),[selectedMeta,setSelectedMeta]=useState<{id:string;created_at:string}|null>(null);
  const [dirty,setDirty]=useState(false);
+ const [exportMessage,setExportMessage]=useState('');
+ const currentMarkdown=useRef(sample.markdown);
+ function updateMarkdown(value:string){currentMarkdown.current=value;setMarkdown(value);}
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
  const draftVersion=useRef(0),rightsVersion=useRef<number|null>(null),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
@@ -104,8 +108,8 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  }
  useEffect(()=>{function warn(e:BeforeUnloadEvent){if(dirty){e.preventDefault();e.returnValue='';}}window.addEventListener('beforeunload',warn);return ()=>window.removeEventListener('beforeunload',warn);},[dirty]);
  function mayLeave(){return !dirty||window.confirm('保存していない変更があります。破棄して記事を切り替えますか？');}
- function createNew(){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId('');setSelectedMeta(null);setTitle('');setMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
- function openArticle(a:Article){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setSelectedMeta({id:a.id,created_at:a.created_at});setTitle(a.title);setMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
+ function createNew(){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId('');setSelectedMeta(null);setTitle('');updateMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
+ function openArticle(a:Article){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setSelectedMeta({id:a.id,created_at:a.created_at});setTitle(a.title);updateMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
  async function save(makePublic:boolean){
   if(busy||saving.current||conversion.current)return;
   // A queued edit must invalidate confirmation before React rerenders. Also
@@ -157,11 +161,16 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
    const data=raw as ApiReply;
    if(!r.ok)throw new Error(typeof data.error==='string'?data.error:'変換できませんでした。');
    if(typeof data.markdown!=='string'||('title' in data&&typeof data.title!=='string')||('sourceUrl' in data&&typeof data.sourceUrl!=='string'))throw new Error('変換結果を読み込めませんでした。本文は残っています。');
-   draftVersion.current++;setMarkdown(data.markdown);setTitle(data.title||'変換した記事');setSourceUrl(data.sourceUrl||sourceUrl);setDirty(true);setRights(false);setTab('preview');setMessage('Markdownに変換しました。本文・出典・ライセンスを確認してから公開してください。');
+   draftVersion.current++;updateMarkdown(data.markdown);setTitle(data.title||'変換した記事');setSourceUrl(data.sourceUrl||sourceUrl);setDirty(true);setRights(false);setTab('preview');setMessage('Markdownに変換しました。本文・出典・ライセンスを確認してから公開してください。');
   }catch(e){if(isCurrent())setMessage(e instanceof Error?e.message:'変換できませんでした。');}
   finally{window.clearTimeout(timeout);pending.controller.signal.removeEventListener('abort',onAbort);if(conversion.current===pending){conversion.current=null;setBusy(false);}}
  }
  async function copyUrl(){try{await navigator.clipboard.writeText(shareUrl);setMessage('共有URLをコピーしました。');}catch{setMessage('コピーできませんでした。表示されたURLを選択してコピーしてください。');}}
+ function exportBody(){
+  const body=currentMarkdown.current;if(!body.length)return;
+  try{downloadMarkdownBody(body);setExportMessage('本文の書き出しを開始しました。端末側でファイルの保存を確認してください。サーバーへの保存・公開は行っていません。');}
+  catch{setExportMessage('本文を書き出せませんでした。本文はこの画面に残っています。');}
+ }
  const selectedArticle=articles.find(a=>a.id===id)||(selectedMeta?.id===id?selectedMeta:null);
  const origin=window.location.origin;
  const sourceLink=articleLink(sourceUrl,origin);
@@ -227,12 +236,17 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
     <div className={`writing-surface ${tab}`}>
      <div id="markdown-panel" className="markdown-pane" hidden={tab!=='edit'}>
       <label htmlFor="markdown-body" className="sr-only">Markdown本文</label>
-      <textarea disabled={busy} name="markdown" id="markdown-body" spellCheck={false} value={markdown} onChange={e=>{draftChanged();setMarkdown(e.target.value);setDirty(true);}} placeholder={'# 見出し\n\nここにMarkdownを貼り付けてください。'} aria-label="Markdown本文"/>
+      <textarea disabled={busy} name="markdown" id="markdown-body" spellCheck={false} value={markdown} onChange={e=>{draftChanged();updateMarkdown(e.target.value);setDirty(true);}} placeholder={'# 見出し\n\nここにMarkdownを貼り付けてください。'} aria-label="Markdown本文"/>
      </div>
      <div id="preview-panel" className="preview-pane" hidden={tab!=='preview'} aria-label="本文のプレビュー">
       {markdown?<Markdown text={markdown} origin={origin} renderExternal={externalLink}/>:<p className="preview-empty">本文のプレビューがここに表示されます。Markdownを入力するか、URLから変換してください。</p>}
      </div>
     </div>
+   </section>
+   <section className="publish-bar" aria-label="編集中の本文の書き出し">
+    <button type="button" className="secondary-button" onClick={exportBody} disabled={!markdown.length} aria-describedby="local-export-guidance">Markdown本文を端末に書き出す</button>
+    <p id="local-export-guidance" className="publication-guidance">編集中の本文だけを .md ファイルにします。タイトル・元URLは含みません。サーバーへの保存や公開とは別の操作です。</p>
+    {exportMessage&&<p className="notice" role="status" aria-live="polite">{exportMessage}</p>}
    </section>
    <section className="publish-bar" aria-label="記事の保存と公開">
     <label className="rights-check"><input disabled={busy} type="checkbox" checked={rights} onChange={e=>{draftChanged();rightsVersion.current=e.target.checked?draftVersion.current:null;setRights(e.target.checked);}}/><span>出典・ライセンス・個人情報を確認した</span></label>
