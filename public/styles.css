@@ -45,6 +45,14 @@ input { min-width: 0; padding: 11px 14px; }
 .sidebar { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 20px 0 24px; border-right: 1px solid var(--line); }
 .sidebar-heading { display: flex; flex-direction: column; gap: 12px; padding: 0 16px 6px; }
 .sidebar-heading h1 { margin: 0; font-size: 13px; color: var(--muted); font-weight: 500; }
+.article-search { display: flex; flex-direction: column; gap: 8px; margin: 10px 16px; min-width: 0; }
+.article-search label { font-size: 13px; font-weight: 600; color: var(--ink); }
+.article-search input { box-sizing: border-box; width: 100%; min-width: 0; min-height: 44px; border: 1px solid var(--line); border-radius: 5px; padding: 10px; background: var(--paper); color: var(--ink); font: inherit; font-size: 13px; }
+.search-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.search-actions button { min-height: 44px; flex: 1; white-space: nowrap; }
+.article-search p, .search-status { margin: 0; font-size: 12px; line-height: 1.8; color: var(--muted); overflow-wrap: anywhere; }
+.search-status { padding: 0 16px 8px; }
+.article-search .search-feedback { color: #a33030; }
 .new-button { color: #fff; background: var(--green); border-color: var(--green); font-size: 14px; }
 .new-button:hover:not(:disabled) { background: #12575e; }
 .draft-list { display: flex; flex-direction: column; max-height: min(55vh, 520px); overflow-y: auto; scrollbar-gutter: stable; }
