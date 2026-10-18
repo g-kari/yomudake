@@ -37,11 +37,13 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  const [dirty,setDirty]=useState(false);
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
- const draftVersion=useRef(0),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
+ const draftVersion=useRef(0),rightsVersion=useRef<number|null>(null),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
+ const renderedDraftVersion=draftVersion.current;
  const mounted=useRef(false),listRequest=useRef<{version:number;controller:AbortController}|null>(null),listElement=useRef<HTMLElement|null>(null);
  const failedPage=useRef<PageTarget|null>(null);
  function draftChanged(){
   draftVersion.current++;
+  rightsVersion.current=null;setRights(false);
   const pending=conversion.current;
   if(pending){conversion.current=null;pending.controller.abort();setBusy(false);}
  }
@@ -92,7 +94,9 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  function openArticle(a:Article){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setSelectedMeta({id:a.id,created_at:a.created_at});setTitle(a.title);setMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
  async function save(makePublic:boolean){
   if(busy||saving.current||conversion.current)return;
-  if(makePublic&&!rights){setMessage('本文・出典・ライセンスを確認し、公開確認にチェックしてください。');return;}
+  // A queued edit must invalidate confirmation before React rerenders. Also
+  // reject handlers whose rendered payload predates an edit or a new check.
+  if(makePublic&&(!rights||rightsVersion.current!==draftVersion.current||renderedDraftVersion!==draftVersion.current)){setMessage('本文・出典・ライセンスを確認し、公開確認にチェックしてください。');return;}
   // Keep mutation requests single-flight through list refresh. Newer queued edits
   // invalidate only the clean-state acknowledgement, not the server-side write.
   const pending={version:draftVersion.current};saving.current=pending;
@@ -209,9 +213,9 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
     </div>
    </section>
    <section className="publish-bar" aria-label="記事の保存と公開">
-    <label className="rights-check"><input disabled={busy} type="checkbox" checked={rights} onChange={e=>{draftChanged();setRights(e.target.checked);}}/><span>出典・ライセンス・個人情報を確認した</span></label>
+    <label className="rights-check"><input disabled={busy} type="checkbox" checked={rights} onChange={e=>{draftChanged();rightsVersion.current=e.target.checked?draftVersion.current:null;setRights(e.target.checked);}}/><span>出典・ライセンス・個人情報を確認した</span></label>
     <div className="publish-actions"><button className="button" onClick={()=>save(false)} disabled={busy}>{published?'非公開で保存':'下書き保存'}</button><button className="secondary-button" onClick={()=>save(true)} disabled={busy||!rights}>{busy?'保存中…':published?'公開内容を更新':'公開する'}</button></div>
-    <p className="publication-guidance">公開した記事だけ、誰でも読めます。非公開に戻しても、他者が保存したコピーは取り消せません。</p>
+    <p className="publication-guidance">タイトル・本文・元URLを変更したら、公開前にもう一度確認してください。公開した記事だけ、誰でも読めます。非公開に戻しても、他者が保存したコピーは取り消せません。</p>
    </section>
    {message&&<p className="notice" role="status" aria-live="polite">{message}</p>}
    {shareUrl&&<div className="share-box"><label htmlFor="share-url">公開URL</label><input id="share-url" readOnly value={shareUrl}/><button className="secondary-button" onClick={copyUrl}>コピー</button><a href={shareUrl} target="_blank" rel="noopener noreferrer">開く ↗</a></div>}

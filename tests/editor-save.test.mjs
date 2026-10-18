@@ -42,6 +42,36 @@ async function acknowledge(index=0,data,status=200){const input=sent(index);awai
 async function listReply(index,articles=[saved],status=200){await act(async()=>{lists[index].resolve(Response.json(status===200?{articles}:{error:'Synthetic list failure'},{status}));});}
 async function rejectPost(index,message){await act(async()=>{posts[index].reject(new Error(message));});}
 const tests=[
+ ...[
+  ['title','input[name="title"]','Changed after confirmation'],
+  ['body','#markdown-body','# Changed after confirmation'],
+  ['source','#source-url','https://source.example.test/changed']
+ ].map(([field,selector,value])=>['a changed '+field+' requires current-content confirmation before publication',async()=>{
+  await newDraft();await act(async()=>rights().click());await edit(selector,value);
+  check(!rights().checked,'Changed '+field+' retained the old publication confirmation');check(button('公開する').disabled,'Changed '+field+' left Publish enabled');check(unloadWarns(),'Changed '+field+' lost unsaved warning');
+  await click('公開する');check(posts.length===0,'Changed '+field+' was published without rechecking');
+  await act(async()=>rights().click());await click('公開する');check(posts.length===1&&sent(0).published,'Reconfirmed '+field+' could not publish');check(sent(0).title===title().value&&sent(0).markdown===body().value&&sent(0).sourceUrl===url().value,'Reconfirmed publication used obsolete content');await acknowledge();await listReply(1);
+ }]),
+ ['focus, tabs, and unchanged values retain a valid publication confirmation',async()=>{
+  await newDraft();await act(async()=>rights().click());const before=values();await act(async()=>{title().focus();body().focus();url().focus();});await click('プレビュー');await click('Markdown');
+  for(const [selector,value] of [['input[name="title"]',before.title],['#markdown-body',before.body],['#source-url',before.url]])await edit(selector,value);
+  check(rights().checked&&!button('公開する').disabled,'Non-content navigation invalidated confirmation');await click('公開する');check(posts.length===1,'Valid confirmation did not publish');await acknowledge();await listReply(1);
+ }],
+ ['changed content can still be saved privately without another publication confirmation',async()=>{
+  await newDraft();await act(async()=>rights().click());await edit('#markdown-body','# Privately edited after confirmation');check(!rights().checked,'Changed private draft retained confirmation');await click('下書き保存');check(posts.length===1&&!sent(0).published&&!sent(0).rightsConfirmed,'Private save required or reused public confirmation');check(sent(0).markdown===body().value,'Private save lost the latest content');await acknowledge();await listReply(1);check(!unloadWarns(),'Confirmed private save stayed dirty');
+ }],
+ ['editing an already-public article leaves its live status but requires a fresh update confirmation',async()=>{
+  await click('Saved fixture公開中 · 2026-10-09');await act(async()=>rights().click());await edit('#markdown-body','# Changed public fixture');
+  check(!rights().checked&&button('公開内容を更新').disabled,'Public update retained old confirmation');check(element('.document-status').textContent==='公開中','Unsaved edit hid existing publication');check(element('#share-url').value.endsWith('/p/'+saved.id),'Unsaved edit removed existing public URL');await click('公開内容を更新');check(posts.length===0,'Changed public article was updated without rechecking');await act(async()=>rights().click());await click('公開内容を更新');check(posts.length===1&&sent(0).id===saved.id&&sent(0).published,'Reconfirmed public update lost its ID');await acknowledge();await listReply(1);
+ }],
+ ['an input edit followed by Publish in the same tick cannot use a stale confirmation',async()=>{
+  await newDraft();await act(async()=>rights().click());await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'# Same-tick unconfirmed content');target.dispatchEvent(new Event('input',{bubbles:true}));button('公開する').click();});
+  check(posts.length===0,'Same-tick edit published with stale confirmation');check(!rights().checked&&unloadWarns(),'Same-tick edit did not remain an unconfirmed draft');
+ }],
+ ['same-tick edit and recheck cannot publish an obsolete rendered payload',async()=>{
+  await newDraft();await act(async()=>rights().click());await act(async()=>{const target=title();Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(target,'# Same-tick latest title');target.dispatchEvent(new Event('input',{bubbles:true}));rights().click();rights().click();button('公開する').click();});
+  check(posts.length===0,'Same-tick recheck published an obsolete rendered payload');check(unloadWarns(),'Same-tick recheck cleared unsaved state');if(!rights().checked)await act(async()=>rights().click());await click('公開する');check(posts.length===1&&sent(0).title==='# Same-tick latest title','Settled recheck did not publish the latest title');await acknowledge();await listReply(1);
+ }],
  ['rapid repeated saves dispatch one request and retain the same article ID',async()=>{
   await newDraft();await act(async()=>{const target=button('下書き保存');target.click();target.click();});check(posts.length===1,'Duplicate save request: '+posts.length);check(sent(0).markdown==='# My edited body','Wrong body snapshot');await acknowledge();await listReply(1);check(!url().disabled,'Save left editor locked');check(!unloadWarns(),'Confirmed save stayed dirty');
  }],
@@ -127,7 +157,7 @@ test('actual Editor save handlers protect current revisions with synthetic API r
   await window.editorSaveTestDone;
   const report=JSON.parse(window.document.querySelector('#result').textContent);
   assert.ok(!report.fatal,report.fatal);
-  assert.equal(report.results.length,21,'Incomplete save coverage');
+  assert.equal(report.results.length,29,'Incomplete save coverage');
   for(const result of report.results)await t.test(result.name,()=>assert.equal(result.ok,true,result.error));
  }finally{
   await window.happyDOM.close();
