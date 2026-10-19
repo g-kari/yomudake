@@ -40,7 +40,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  const [dirty,setDirty]=useState(false);
  const [exportMessage,setExportMessage]=useState('');
  const currentMarkdown=useRef(sample.markdown);
- function updateMarkdown(value:string){currentMarkdown.current=value;setMarkdown(value);}
+ function updateMarkdown(value:string){if(currentMarkdown.current!==value)setExportMessage('');currentMarkdown.current=value;setMarkdown(value);}
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
  const draftVersion=useRef(0),rightsVersion=useRef<number|null>(null),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
@@ -108,8 +108,8 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  }
  useEffect(()=>{function warn(e:BeforeUnloadEvent){if(dirty){e.preventDefault();e.returnValue='';}}window.addEventListener('beforeunload',warn);return ()=>window.removeEventListener('beforeunload',warn);},[dirty]);
  function mayLeave(){return !dirty||window.confirm('保存していない変更があります。破棄して記事を切り替えますか？');}
- function createNew(){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId('');setSelectedMeta(null);setTitle('');updateMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
- function openArticle(a:Article){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setSelectedMeta({id:a.id,created_at:a.created_at});setTitle(a.title);updateMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
+ function createNew(){if(saving.current||!mayLeave())return;setExportMessage('');setPendingLink(null);draftChanged();setDirty(false);setId('');setSelectedMeta(null);setTitle('');updateMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
+ function openArticle(a:Article){if(saving.current||!mayLeave())return;setExportMessage('');setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setSelectedMeta({id:a.id,created_at:a.created_at});setTitle(a.title);updateMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
  async function save(makePublic:boolean){
   if(busy||saving.current||conversion.current)return;
   // A queued edit must invalidate confirmation before React rerenders. Also
@@ -161,7 +161,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
    const data=raw as ApiReply;
    if(!r.ok)throw new Error(typeof data.error==='string'?data.error:'変換できませんでした。');
    if(typeof data.markdown!=='string'||('title' in data&&typeof data.title!=='string')||('sourceUrl' in data&&typeof data.sourceUrl!=='string'))throw new Error('変換結果を読み込めませんでした。本文は残っています。');
-   draftVersion.current++;updateMarkdown(data.markdown);setTitle(data.title||'変換した記事');setSourceUrl(data.sourceUrl||sourceUrl);setDirty(true);setRights(false);setTab('preview');setMessage('Markdownに変換しました。本文・出典・ライセンスを確認してから公開してください。');
+   draftVersion.current++;setExportMessage('');updateMarkdown(data.markdown);setTitle(data.title||'変換した記事');setSourceUrl(data.sourceUrl||sourceUrl);setDirty(true);setRights(false);setTab('preview');setMessage('Markdownに変換しました。本文・出典・ライセンスを確認してから公開してください。');
   }catch(e){if(isCurrent())setMessage(e instanceof Error?e.message:'変換できませんでした。');}
   finally{window.clearTimeout(timeout);pending.controller.signal.removeEventListener('abort',onAbort);if(conversion.current===pending){conversion.current=null;setBusy(false);}}
  }

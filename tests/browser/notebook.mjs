@@ -93,6 +93,57 @@ async function localDraftExportChecks(browser){
  }finally{await context.close();}
 }
 
+// Local-export feedback belongs to one document/body, not a later draft.
+async function localExportFeedbackChecks(browser){
+ const origin='http://127.0.0.1:4179';
+ const first={id:'c276dbe0-bdb7-47e0-8e6c-adfa3f8a7d8d',title:'合成書き出し記事',source_url:'https://source.example.test/first',markdown:'# 合成の本文 🦊\n\n末尾の空白  \n',published:1,created_at:'2026-10-09T00:00:00Z',updated_at:'2026-10-09T00:00:00Z',published_at:'2026-10-09T00:00:00Z'};
+ const second={...first,id:'dcbe3c20-d502-44dd-b8c4-356585b3985d',title:'同じ本文の別記事'};
+ for(const width of [390,1440])for(const outcome of ['success','failure']){
+  const context=await browser.newContext({viewport:{width,height:1000},acceptDownloads:true,serviceWorkers:'block'});
+  if(outcome==='failure')await context.addInitScript(()=>{URL.createObjectURL=()=>{throw new Error('Synthetic private local failure');};});
+  const page=await context.newPage(),errors=[];let writes=0,conversions=0,downloads=0;
+  page.on('pageerror',error=>errors.push(error.message));page.on('download',()=>downloads++);
+  await page.route('**/*',async route=>{
+   const request=route.request(),url=new URL(request.url());assert.equal(url.origin,origin,'No external network');
+   if(url.pathname==='/api/articles'){
+    if(request.method()!=='GET'){writes++;throw new Error('Unexpected article write');}
+    return route.fulfill({contentType:'application/json',body:JSON.stringify({articles:[first,second]})});
+   }
+   if(url.pathname==='/api/convert'&&request.method()==='POST'){
+    conversions++;return route.fulfill({status:conversions===1?503:200,contentType:'application/json',body:JSON.stringify(conversions===1?{error:'Synthetic conversion rejection'}:{title:'合成変換後',markdown:first.markdown,sourceUrl:'https://source.example.test/converted'})});
+   }
+   assert.equal(request.method(),'GET','No unexpected write');return route.continue();
+  });
+  const action=()=>page.getByRole('button',{name:'Markdown本文を端末に書き出す',exact:true});
+  const notice=()=>page.locator('[aria-label="編集中の本文の書き出し"] .notice');
+  const open=title=>page.getByRole('button',{name:title+' 公開中 · 2026-10-09',exact:true}).click();
+  const exportNow=async()=>{
+   const expected=await page.locator('#markdown-body').inputValue(),before=downloads;
+   if(outcome==='success'){
+    const pending=page.waitForEvent('download');await action().click();const download=await pending;
+    assert.equal(download.suggestedFilename(),'yomudake-draft.md');assert.equal(await download.failure(),null);assert.deepEqual(readFileSync(await download.path()),Buffer.from(expected,'utf8'));
+   }else{await action().click();assert.equal(downloads,before);}
+   await notice().waitFor();assert.ok((await notice().textContent()).includes(outcome==='success'?'本文の書き出しを開始しました':'本文を書き出せませんでした'));
+   assert.ok(!(await page.locator('body').textContent()).includes('Synthetic private local failure'));
+  };
+  try{
+   await page.goto(origin+'/admin');await page.getByText('保存したすべての記事',{exact:true}).waitFor();await open(first.title);await exportNow();const expected=await notice().textContent();
+   await page.locator('input[name="title"]').fill('本文に含まれない新タイトル');await page.locator('#source-url').fill('https://source.example.test/edited');await page.locator('.rights-check input').check();
+   await page.getByRole('button',{name:'Markdown',exact:true}).click();await page.getByRole('button',{name:'プレビュー',exact:true}).click();
+   page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();assert.equal(await notice().textContent(),expected);
+   await page.getByRole('button',{name:'Markdown',exact:true}).click();await page.locator('#markdown-body').fill('# まだ書き出していない合成編集');assert.equal(await notice().count(),0);await exportNow();
+   page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();assert.equal(await notice().count(),0);assert.equal(await page.locator('#markdown-body').inputValue(),'');
+   await open(first.title);await exportNow();await open(second.title);assert.equal(await notice().count(),0);assert.equal(await page.locator('#markdown-body').inputValue(),first.markdown);await open(first.title);assert.equal(await notice().count(),0);
+   await exportNow();const beforeFailedConversion=await notice().textContent();await page.getByRole('button',{name:'URLから変換',exact:true}).click();await page.locator('.editor-main > .notice').filter({hasText:'Synthetic conversion rejection'}).waitFor();assert.equal(await notice().textContent(),beforeFailedConversion);
+   await page.getByRole('button',{name:'URLから変換',exact:true}).click();await page.locator('.editor-main > .notice').filter({hasText:'Markdownに変換しました。'}).waitFor();assert.equal(await notice().count(),0);assert.equal(await page.locator('#markdown-body').inputValue(),first.markdown);
+   assert.equal(await page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;}),true);
+   await action().scrollIntoViewIfNeeded();await page.screenshot({path:out+`local-export-feedback-${outcome}-${width}.png`,fullPage:false});
+   assert.equal(writes,0);assert.equal(conversions,2);assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
+   results.push({name:`local export ${outcome} feedback follows body/article lifetime; canceled leave and rejected conversion retain current feedback at ${width}px`,ok:true});
+  }finally{await context.close();}
+ }
+}
+
 async function conversionDeadlineChecks(browser){
  const origin='http://127.0.0.1:4179';
  const sourceUrl='https://example.org/synthetic-conversion';
@@ -277,6 +328,7 @@ async function conversionDeadlineChecks(browser){
 try {
  browser=await chromium.launch({headless:true});
  await localDraftExportChecks(browser);
+ await localExportFeedbackChecks(browser);
  await conversionDeadlineChecks(browser);
  const page=await browser.newPage({viewport:{width:1440,height:1100}});
  let blockEmbed=false;const outgoing=[];
