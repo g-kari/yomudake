@@ -1,6 +1,6 @@
 import {chromium} from 'playwright';
 import {ready,close} from './fixture-server.mjs';
-import {mkdirSync,writeFileSync} from 'node:fs';
+import {mkdirSync,writeFileSync,readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
 await ready;
 const out=new URL('../../.sites-runtime/browser/screenshots/',import.meta.url).pathname;mkdirSync(out,{recursive:true});
@@ -13,6 +13,86 @@ const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;})
 // Exercise the shipped editor bundle, without owner credentials, real URLs, AI,
 // D1 or article writes. Native withheld headers are covered separately from the
 // deliberately abort-ignoring synthetic Response stream used for body coverage.
+// Explicit local downloads of synthetic current drafts; no backend mutation.
+async function localDraftExportChecks(browser){
+ const origin='http://127.0.0.1:4179';
+ const body='# 合成の長文 🦊\n\n**raw Markdown** <script>not executed</script>\n\n末尾の空白  \n';
+ for(const width of [320,390,1440])for(const phase of ['idle','headers','success-body','error-body']){
+  const context=await browser.newContext({viewport:{width,height:1000},acceptDownloads:true,serviceWorkers:'block'});
+  const page=await context.newPage(),requests=[],errors=[];let writes=0,release;
+  const gate=new Promise(done=>{release=done;});
+  page.on('pageerror',error=>errors.push(error.message));
+  if(phase.endsWith('body'))await context.addInitScript(({phase})=>{
+   const original=window.fetch;window.__localExportWrites=0;
+   window.fetch=(input,options={})=>{
+    if(new URL(typeof input==='string'?input:input.url,location.href).pathname==='/api/articles'&&options.method==='POST'){
+     window.__localExportWrites++;
+     return Promise.resolve(new Response(new ReadableStream({start(controller){window.__releaseLocalExportBody=()=>{controller.enqueue(new TextEncoder().encode(JSON.stringify({error:'Synthetic unresolved result'})));controller.close();};}}),{status:phase==='success-body'?200:503,headers:{'Content-Type':'application/json'}}));
+    }return original(input,options);
+   };
+  },{phase});
+  await page.route('**/*',async route=>{
+   const request=route.request(),url=new URL(request.url());requests.push({url:request.url(),method:request.method()});
+   assert.equal(url.origin,origin,'No external network');
+   if(url.pathname==='/api/articles'&&request.method()==='POST'){
+    writes++;assert.equal(phase,'headers');await gate;
+    try{await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Synthetic delayed result'})});}catch{}
+    return;
+   }
+   assert.equal(request.method(),'GET','No unexpected write');
+   if(url.pathname==='/api/articles'){await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({articles:[]})});return;}
+   await route.continue();
+  });
+  try{
+   await page.goto(origin+'/admin');await page.getByText('保存したすべての記事',{exact:true}).waitFor();await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();
+   const action=page.getByRole('button',{name:'Markdown本文を端末に書き出す',exact:true});
+   assert.equal(await action.isDisabled(),true,'Empty body disables export');
+   await page.locator('input[name="title"]').fill('含めない合成タイトル');await page.locator('#source-url').fill('https://source.example.test/not-in-download');
+   await page.locator('#markdown-body').fill(body);await page.locator('.rights-check input').check();
+   if(phase!=='idle'){
+    await page.getByRole('button',{name:'下書き保存',exact:true}).click();
+    await page.waitForFunction(()=>document.querySelector('#markdown-body').disabled);
+   }
+   const snapshot=()=>page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return {title:document.querySelector('input[name="title"]').value,body:document.querySelector('#markdown-body').value,source:document.querySelector('#source-url').value,rights:document.querySelector('.rights-check input').checked,dirty:event.defaultPrevented,status:document.querySelector('.document-status').textContent,share:document.querySelector('#share-url')?.value||''};});
+   const before=await snapshot(),networkCount=requests.length;
+   assert.equal(before.dirty,true);assert.equal(await action.isEnabled(),true);
+   assert.ok((await page.locator('#local-export-guidance').textContent()).includes('タイトル・元URLは含みません'));
+   await action.scrollIntoViewIfNeeded();await action.focus();
+   const box=await action.boundingBox();assert.ok(box&&box.x>=0&&box.y>=0&&box.x+box.width<=width+1&&box.y+box.height<=1001,'Focused action is within viewport');
+   const pendingDownload=page.waitForEvent('download');await page.keyboard.press('Enter');const download=await pendingDownload;
+   assert.equal(download.suggestedFilename(),'yomudake-draft.md');assert.equal(await download.failure(),null);
+   const downloaded=readFileSync(await download.path());assert.deepEqual(downloaded,Buffer.from(body,'utf8'),'Exact current body bytes, no title/source wrapping');
+   assert.deepEqual(await snapshot(),before,'Local export must not mutate draft/publication/dirty state');
+   assert.equal(requests.length,networkCount,'Export sent network request');
+   assert.equal(writes+(await page.evaluate(()=>window.__localExportWrites||0)),phase==='idle'?0:1,'No replay of unknown POST');
+   assert.equal(await action.evaluate(el=>el===document.activeElement),true,'Focus stays on export action');
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'No page overflow');
+   assert.ok((await page.locator('[aria-label="編集中の本文の書き出し"]').textContent()).includes('保存中の処理の結果を示すものではありません'));
+   await page.screenshot({path:out+`local-export-${phase}-${width}.png`,fullPage:false});
+   if(phase==='idle'){
+    await page.locator('#markdown-body').fill(body+'\n更新した本文');const next=page.waitForEvent('download');await action.click();const repeated=await next;
+    assert.deepEqual(readFileSync(await repeated.path()),Buffer.from(body+'\n更新した本文','utf8'),'Repeated explicit export uses latest edit');
+   }
+   assert.deepEqual(errors,[]);results.push({name:`local current-body download ${phase} ${width}px exactUTF8/keyboard/focus/noNetwork/noReplay/dirty`,ok:true});
+  }finally{
+   release();if(phase.endsWith('body'))await page.evaluate(()=>window.__releaseLocalExportBody?.()).catch(()=>{});
+   await context.close();
+  }
+ }
+ const context=await browser.newContext({viewport:{width:390,height:1000},serviceWorkers:'block'});
+ try{
+  await context.addInitScript(()=>{URL.createObjectURL=()=>{throw new Error('Synthetic local unavailable');};});
+  const page=await context.newPage();let downloads=0;page.on('download',()=>downloads++);
+  await page.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort());
+  await page.goto(origin+'/admin');await page.getByText('保存したすべての記事',{exact:true}).waitFor();await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();await page.locator('#markdown-body').fill(body);
+  await page.getByRole('button',{name:'Markdown本文を端末に書き出す',exact:true}).click();
+  assert.equal(downloads,0);assert.equal(await page.locator('#markdown-body').inputValue(),body);
+  assert.ok((await page.locator('[aria-label="編集中の本文の書き出し"]').textContent()).includes('本文を書き出せませんでした'));
+  assert.equal(await page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;}),true);
+  results.push({name:'local download initiation failure is honest and preserves current dirty draft',ok:true});
+ }finally{await context.close();}
+}
+
 async function conversionDeadlineChecks(browser){
  const origin='http://127.0.0.1:4179';
  const sourceUrl='https://example.org/synthetic-conversion';
@@ -196,6 +276,7 @@ async function conversionDeadlineChecks(browser){
 }
 try {
  browser=await chromium.launch({headless:true});
+ await localDraftExportChecks(browser);
  await conversionDeadlineChecks(browser);
  const page=await browser.newPage({viewport:{width:1440,height:1100}});
  let blockEmbed=false;const outgoing=[];
@@ -294,7 +375,7 @@ try {
  results.push({name:'real Chromium tab/edit/cancel/new/convert/repeated save/publish/public-reading flows with isolated synthetic backend',ok:true});
  assert.deepEqual(errors,[]);results.push({name:'no browser page errors',ok:true});
  const keyboard=await browser.newPage({viewport:{width:390,height:900}});await keyboard.goto('http://127.0.0.1:4179/admin');await keyboard.getByRole('button',{name:/余白をつくる、小さな習慣/}).click();
- await keyboard.getByRole('button',{name:'Markdown',exact:true}).focus();await keyboard.keyboard.press('Tab');assert.equal(await keyboard.getByRole('button',{name:'プレビュー',exact:true}).evaluate(el=>el===document.activeElement),true);await keyboard.keyboard.press('Tab');assert.equal(await keyboard.locator('.rights-check input').evaluate(el=>el===document.activeElement),true);
+ await keyboard.getByRole('button',{name:'Markdown',exact:true}).focus();await keyboard.keyboard.press('Tab');assert.equal(await keyboard.getByRole('button',{name:'プレビュー',exact:true}).evaluate(el=>el===document.activeElement),true);await keyboard.keyboard.press('Tab');assert.equal(await keyboard.getByRole('button',{name:'Markdown本文を端末に書き出す',exact:true}).evaluate(el=>el===document.activeElement),true);await keyboard.keyboard.press('Tab');assert.equal(await keyboard.locator('.rights-check input').evaluate(el=>el===document.activeElement),true);
  const target=await keyboard.locator('.rights-check').boundingBox();assert.ok(target.height>=44);results.push({name:'keyboard skips hidden source pane and reaches a 44px rights target',ok:true});
  await keyboard.emulateMedia({reducedMotion:'reduce'});assert.equal(await keyboard.locator('button').first().evaluate(el=>getComputedStyle(el).transitionDuration),'0s');results.push({name:'reduced motion respected',ok:true});
  writeFileSync(new URL('../../.sites-runtime/browser/results.json',import.meta.url),JSON.stringify({browser:'pinned Playwright Chromium on isolated CI loopback',syntheticOnly:true,results,conversionDeadlineEvidence},null,2));console.log(JSON.stringify(results,null,2));
