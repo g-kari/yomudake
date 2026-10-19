@@ -15,7 +15,7 @@
     "dev": "wrangler dev --config wrangler.local.jsonc --local",
     "deploy": "node scripts/require-config.mjs && pnpm run build && wrangler deploy --config wrangler.jsonc",
     "typecheck": "tsc --noEmit",
-    "test:browser": "node tests/browser/notebook.mjs && node tests/browser/list-recovery.mjs && node tests/browser/article-outline.mjs && node tests/browser/article-pagination.mjs && node tests/browser/editor-conflict.mjs"
+    "test:browser": "node tests/browser/notebook.mjs && node tests/browser/list-recovery.mjs && node tests/browser/article-outline.mjs && node tests/browser/article-pagination.mjs && node tests/browser/markdown-tables.mjs && node tests/browser/editor-conflict.mjs"
   },
   "dependencies": {
     "jose": "6.2.12",
