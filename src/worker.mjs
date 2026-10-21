@@ -14,6 +14,8 @@ const headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer
 const json=(data,status=200)=>Response.json(data,{status,headers});
 const html=(body,status=200)=>new Response(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>よむだけ</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/styles.css"></head><body>${body}</body></html>`,{status,headers:{...headers,'Content-Type':'text/html; charset=utf-8'}});
 const brand='<a href="/" class="brand"><span class="brand-mark">読</span> よむだけ</a>';
+const articleRoute=/^\/(p|export)\/([a-zA-Z0-9-]+)$/;
+const outboundRoute=/^\/out\/([a-zA-Z0-9-]+)\/(source|link-(?:0|[1-9]\d{0,4})|(?:artwork|author)-[0-9]{1,20})$/;
 async function articleHtml(a,origin){
  const revision=await articleRevision(a);
  const source=articleLink(a.source_url,origin);
@@ -29,8 +31,17 @@ function outboundHtml(destination,a,origin,revision){
  return `<main class="signin outbound-screen">${brand}<h1>外部サイトです</h1><p>リンク先の内容や安全性は、よむだけでは保証できません。移動先を確認してから進んでください。</p>${artwork}<dl class="outbound-destination"><dt>移動先のサイト</dt><dd>${escape(host)}</dd><dt>URL</dt><dd>${escape(destination)}</dd></dl><div class="outbound-actions"><a class="secondary-button" href="/p/${escape(a.id)}">戻る</a><a class="button" href="${escape(destination)}" target="_blank" rel="noopener noreferrer nofollow" referrerpolicy="no-referrer">外部サイトへ進む</a></div></main>`;
 }
 
-export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}={}){return {async fetch(request,env){
+export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}={}){async function fetch(request,env){
  const url=new URL(request.url),path=url.pathname;
+ // Only the existing public read routes share GET metadata. Do not rewrite
+ // protected API/MCP methods or asset requests, or dispatch mutations/AI work.
+ if(request.method==='HEAD'&&(path==='/'||articleRoute.test(path)||outboundRoute.test(path))){
+  const response=await fetch(new Request(request,{method:'GET'}),env);
+  // Keep representation headers (never infer Content-Length: 0). No content
+  // leaves the Worker, including for public 404/503 responses.
+  void response.body?.cancel().catch(()=>{});
+  return new Response(null,response);
+ }
  try{
   if(path==='/admin'||path.startsWith('/api/')){const owner=await verifyOwner(request,path==='/api/mcp'&&env.MCP_ACCESS_AUD!==undefined?{...env,ACCESS_AUD:env.MCP_ACCESS_AUD}:env);if(!owner.ok)return path.startsWith('/api/')?json({error:owner.error||'所有者のサインインが必要です。'},owner.status||403):html(`<main class="signin">${brand}<h1>所有者のサインインが必要です</h1><p>管理用Access設定を確認してください。匿名では記事を作成・編集できません。</p></main>`,owner.status||403);}
   if(path==='/admin'&&request.method==='GET')return html('<div id="root"></div><script src="/editor.js" defer></script>');
@@ -51,7 +62,7 @@ export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}
    const result=validateArticleInput(data);if(!result.article)return json({error:result.error},400);await saveArticle(env,result.article);return json({id:result.article.id,published:result.article.published,url:`/p/${result.article.id}`});
   }
   if(path==='/'&&request.method==='GET'){const articles=await listArticles(env,true);return html(`<main class="public-home"><header class="topbar">${brand}<a href="/admin" class="quiet-link">管理画面 ↗</a></header><section class="home-intro"><h1>本文を読む。</h1><p>公開されたMarkdown記事です。</p></section><section class="article-grid">${[...articles,sample].map(a=>`<a class="article-card" href="/p/${escape(a.id)}"><h2>${escape(a.title)}</h2><p>${escape(a.markdown.replace(/[#*>\x60]/g,'').slice(0,100))}</p><span class="card-bottom">${escape(a.created_at.slice(0,10))}<span>読む ↗</span></span></a>`).join('')}</section></main>`);}
-  const outbound=/^\/out\/([a-zA-Z0-9-]+)\/(source|link-(?:0|[1-9]\d{0,4})|(?:artwork|author)-[0-9]{1,20})$/.exec(path);
+  const outbound=outboundRoute.exec(path);
   if(outbound&&request.method==='GET'){
    const a=await getArticle(env,outbound[1],true);
    const revision=a?await articleRevision(a):null;
@@ -64,7 +75,7 @@ export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}
    result.headers.set('Content-Security-Policy',headers['Content-Security-Policy'].replace("frame-src 'none'",'frame-src https://embed.pixiv.net/oembed_iframe.php'));
    return result;
   }
-  const match=/^\/(p|export)\/([a-zA-Z0-9-]+)$/.exec(path);
+  const match=articleRoute.exec(path);
   if(match&&request.method==='GET'){
    const a=await getArticle(env,match[2],true);if(!a)return html('<main class="signin"><h1>公開されていない記事です</h1><a href="/">公開記事へ</a></main>',404);
    if(match[1]==='p')return html(await articleHtml(a,url.origin));
@@ -75,5 +86,5 @@ export function createWorker({verifyOwner=verifyOwnerRequest,convert=convertUrl}
   if(['/styles.css','/editor.js','/favicon.svg'].includes(path)&&env.ASSETS){const asset=await env.ASSETS.fetch(request);const result=new Response(asset.body,asset);result.headers.set('X-Content-Type-Options','nosniff');result.headers.set('Referrer-Policy','no-referrer');return result;}
   return html('<main class="signin"><h1>ページが見つかりません</h1><a href="/">公開記事へ</a></main>',404);
  }catch(error){if(error instanceof ArticlePageError)return json({error:error.message},400);if(error instanceof IngestError)return json({error:error.message,...(error.code?{code:error.code}:{})},error.status);return path.startsWith('/api/')?json({error:'処理できませんでした。入力は画面に残っています。時間を置いて再試行してください。'},503):html('<main class="signin"><h1>記事を読み込めませんでした</h1><p>時間を置いて再試行してください。</p></main>',503);}
-}};}
+}return {fetch};}
 export default createWorker();
