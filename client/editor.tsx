@@ -44,9 +44,12 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  const currentMarkdown=useRef(sample.markdown);
  function updateMarkdown(value:string){currentMarkdown.current=value;setMarkdown(value);}
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
- const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
+ const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,updateMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
  const savedRevision=useRef<Article|string|null>(null);
  const draftVersion=useRef(0),rightsVersion=useRef<number|null>(null),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
+ const messageVersion=useRef(0),copyAttempt=useRef(0);
+ // Every newer notice owns its result, including a save finishing while copying.
+ function setMessage(value:string){messageVersion.current++;updateMessage(value);}
  const renderedDraftVersion=draftVersion.current;
  const mounted=useRef(false),listRequest=useRef<{version:number;controller:AbortController;target:PageTarget}|null>(null),listElement=useRef<HTMLElement|null>(null);
  const searchInputValue=useRef(''),requestedPage=useRef<PageTarget>(firstPage());
@@ -57,7 +60,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   const pending=conversion.current;
   if(pending){conversion.current=null;pending.controller.abort();setBusy(false);}
  }
- useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;draftVersion.current++;listVersion.current++;conversion.current?.controller.abort();conversion.current=null;saving.current=null;listRequest.current?.controller.abort();listRequest.current=null;};},[]);
+ useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;messageVersion.current++;draftVersion.current++;listVersion.current++;conversion.current?.controller.abort();conversion.current=null;saving.current=null;listRequest.current?.controller.abort();listRequest.current=null;};},[]);
  async function load(active:()=>boolean,target:PageTarget=firstPage()){
   listRequest.current?.controller.abort();
   const version=++listVersion.current;
@@ -180,7 +183,12 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   }catch(e){if(isCurrent())setMessage(e instanceof Error?e.message:'変換できませんでした。');}
   finally{window.clearTimeout(timeout);pending.controller.signal.removeEventListener('abort',onAbort);if(conversion.current===pending){conversion.current=null;setBusy(false);}}
  }
- async function copyUrl(){try{await navigator.clipboard.writeText(shareUrl);setMessage('共有URLをコピーしました。');}catch{setMessage('コピーできませんでした。表示されたURLを選択してコピーしてください。');}}
+ async function copyUrl(){
+  const notice=messageVersion.current,attempt=++copyAttempt.current;
+  const current=()=>mounted.current&&messageVersion.current===notice&&copyAttempt.current===attempt;
+  try{await navigator.clipboard.writeText(shareUrl);if(current())setMessage('共有URLをコピーしました。');}
+  catch{if(current())setMessage('コピーできませんでした。表示されたURLを選択してコピーしてください。');}
+ }
  function exportBody(){
   const body=currentMarkdown.current;if(!body.length)return;
   try{downloadMarkdownBody(body);setExportMessage('本文の書き出しを開始しました。端末側でファイルの保存を確認してください。この操作ではサーバーへ保存・公開しません。保存中の処理の結果を示すものではありません。');}
