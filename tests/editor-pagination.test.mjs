@@ -36,8 +36,9 @@ class TestBoundary extends Component{
 }
 window.confirm=message=>{confirmations.push(message);return confirmationAnswer;};
 window.fetch=(url,options={})=>{
+ if(url==='/api/editor/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({protocol:'compare-v1'}));
  if((url==='/api/articles'||String(url).startsWith('/api/articles?'))&&(!options.method||options.method==='GET'))return new Promise((resolve,reject)=>gets.push({url:String(url),options,resolve,reject}));
- if(url==='/api/articles'&&options.method==='POST')return new Promise((resolve,reject)=>posts.push({url,options,resolve,reject}));
+ if(url==='/api/editor/articles'&&options.method==='POST')return new Promise((resolve,reject)=>posts.push({url,options,resolve,reject}));
  if(url==='/api/convert'&&options.method==='POST')return new Promise((resolve,reject)=>conversions.push({url,options,resolve,reject}));
  throw new Error('Unexpected synthetic request: '+url);
 };
@@ -70,7 +71,7 @@ async function reject(index){check(gets[index],'Missing deferred GET '+index);aw
 async function answer(index,records){const url=new URL(gets[index].url,'https://reader.example.test');const cursor=url.searchParams.get('cursor');const payload=page(records,cursor);request(index,cursor);await reply(index,payload);return payload;}
 async function newDraft(){await click('＋ 新しい下書き');await edit('input[name="title"]','Unsaved synthetic title');await edit('#markdown-body','# Unsaved synthetic body');await edit('#source-url','https://source.example.test/unsaved');await act(async()=>element('.rights-check input').click());await click('プレビュー');}
 const sent=index=>JSON.parse(posts[index].options.body);
-async function acknowledge(index=0){check(posts[index],'Missing deferred POST '+index);const input=sent(index);await act(async()=>posts[index].resolve(Response.json({id:input.id,published:input.published,url:'/p/'+input.id})));}
+async function acknowledge(index=0){check(posts[index],'Missing deferred POST '+index);const input=sent(index);await act(async()=>posts[index].resolve(Response.json({protocol:'compare-v1',revision:'a'.repeat(64),id:input.id,published:input.published,url:'/p/'+input.id})));}
 const tests=[
  ['stalled next page retains prior rows and dirty draft, retries exact cursor and ignores late response',async()=>{
   const records=library(205),first=await answer(0,records),prior=pageSnapshot();await newDraft();const before=snapshot();await click(OLDER);await expire();failed();equal(pageSnapshot(),prior,'Timeout changed prior page');equal(snapshot(),before,'Timeout changed draft');check(gets[1].options.signal.aborted,'Page timeout did not abort GET');await click(RETRY);request(2,first.nextCursor);expectPage(await answer(2,records),2);await reply(1,page(records,first.nextCursor));expectPage(page(records,first.nextCursor),2);equal(snapshot(),before,'Late page changed draft');check(deadlines.size===0,'Page success retained timeout');readOnly();

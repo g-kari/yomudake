@@ -19,6 +19,7 @@ window.setTimeout=(callback,delay,...args)=>{if(delay===60000){const id=nextDead
 window.clearTimeout=id=>{if(deadlines.has(id))deadlines.delete(id);else nativeClear(id);};
 window.confirm=message=>{confirmations.push(message);return accept;};
 window.fetch=(url,options={})=>{
+ if(url==='/api/editor/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({protocol:'compare-v1'}));
  if(url==='/api/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({articles:[saved]}));
  if(url==='/api/convert'&&options.method==='POST')return new Promise((resolve,reject)=>{requests.push({url,options,resolve,reject});});
  throw new Error('Unexpected request: '+url);

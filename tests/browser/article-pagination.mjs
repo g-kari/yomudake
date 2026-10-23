@@ -36,7 +36,7 @@ if(process.argv.includes('--list')){
   const insert=db.prepare('INSERT INTO articles (id,title,source_url,markdown,published,created_at,updated_at,published_at) VALUES (?,?,?,?,?,?,?,?)');
   for(let i=1;i<=205;i++){const a=article(i);insert.run(a.id,a.title,a.source_url,a.markdown,a.published,a.created_at,a.updated_at,a.published_at);}
  }
- function prepare(sql,args=[]){return {bind(...a){return prepare(sql,a);},async all(){return {success:true,results:db.prepare(sql).all(...args)};},async first(){return db.prepare(sql).get(...args)||null;},async run(){db.prepare(sql).run(...args);return {success:true};}};}
+ function prepare(sql,args=[]){return {bind(...a){return prepare(sql,a);},async all(){return {success:true,results:db.prepare(sql).all(...args)};},async first(){return db.prepare(sql).get(...args)||null;},async run(){const result=db.prepare(sql).run(...args);return {success:true,meta:{changes:Number(result.changes)}};}};}
  const env={DB:{prepare},ASSETS:{async fetch(request){const path=new URL(request.url).pathname;const type=path.endsWith('.css')?'text/css':path.endsWith('.js')?'application/javascript':'image/svg+xml';return new Response(readFileSync(new URL('public'+path,root)),{headers:{'Content-Type':type}});}}};
  const worker=createWorker({verifyOwner:async()=>({ok:true,status:200}),convert:async()=>{throw new Error('Unexpected synthetic conversion');}});
  const server=http.createServer(async(req,res)=>{try{
@@ -71,7 +71,7 @@ if(process.argv.includes('--list')){
     if(plan){assert.equal(url.pathname+url.search,plan.path);plan.started.resolve();await plan.gate.promise;await route.fulfill({status:plan.status,contentType:'application/json',headers:{'Cache-Control':'no-store'},body:JSON.stringify(plan.body)});plan.finished.resolve();return;}
    }
    if(!['GET','HEAD'].includes(request.method())){
-    if(url.pathname==='/api/articles'&&request.method()==='POST'&&allowSave){allowSave=false;saves++;return route.continue();}
+    if(url.pathname==='/api/editor/articles'&&request.method()==='POST'&&allowSave){allowSave=false;saves++;return route.continue();}
     unexpectedMutations.push(record);return route.abort('blockedbyclient');
    }
    return route.continue();

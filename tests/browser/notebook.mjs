@@ -25,7 +25,7 @@ async function localDraftExportChecks(browser){
   if(phase.endsWith('body'))await context.addInitScript(({phase})=>{
    const original=window.fetch;window.__localExportWrites=0;
    window.fetch=(input,options={})=>{
-    if(new URL(typeof input==='string'?input:input.url,location.href).pathname==='/api/articles'&&options.method==='POST'){
+    if(new URL(typeof input==='string'?input:input.url,location.href).pathname==='/api/editor/articles'&&options.method==='POST'){
      window.__localExportWrites++;
      return Promise.resolve(new Response(new ReadableStream({start(controller){window.__releaseLocalExportBody=()=>{controller.enqueue(new TextEncoder().encode(JSON.stringify({error:'Synthetic unresolved result'})));controller.close();};}}),{status:phase==='success-body'?200:503,headers:{'Content-Type':'application/json'}}));
     }return original(input,options);
@@ -34,7 +34,7 @@ async function localDraftExportChecks(browser){
   await page.route('**/*',async route=>{
    const request=route.request(),url=new URL(request.url());requests.push({url:request.url(),method:request.method()});
    assert.equal(url.origin,origin,'No external network');
-   if(url.pathname==='/api/articles'&&request.method()==='POST'){
+   if(url.pathname==='/api/editor/articles'&&request.method()==='POST'){
     writes++;assert.equal(phase,'headers');await gate;
     try{await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Synthetic delayed result'})});}catch{}
     return;
@@ -50,7 +50,9 @@ async function localDraftExportChecks(browser){
    await page.locator('input[name="title"]').fill('含めない合成タイトル');await page.locator('#source-url').fill('https://source.example.test/not-in-download');
    await page.locator('#markdown-body').fill(body);await page.locator('.rights-check input').check();
    if(phase!=='idle'){
+    const reachedPost=phase==='headers'?page.waitForRequest(r=>new URL(r.url()).pathname==='/api/editor/articles'&&r.method()==='POST'):null;
     await page.getByRole('button',{name:'下書き保存',exact:true}).click();
+    if(reachedPost)await reachedPost;else await page.waitForFunction(()=>window.__localExportWrites===1);
     await page.waitForFunction(()=>document.querySelector('#markdown-body').disabled);
    }
    const snapshot=()=>page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return {title:document.querySelector('input[name="title"]').value,body:document.querySelector('#markdown-body').value,source:document.querySelector('#source-url').value,rights:document.querySelector('.rights-check input').checked,dirty:event.defaultPrevented,status:document.querySelector('.document-status').textContent,share:document.querySelector('#share-url')?.value||''};});
@@ -190,7 +192,7 @@ async function conversionDeadlineChecks(browser){
    const request=route.request(),url=new URL(request.url());
    const record={method:request.method(),url:url.href};evidence.requests.push(record);
    if(url.origin!==origin){evidence.externalRequests.push(record);return route.abort('blockedbyclient');}
-   if(url.pathname.startsWith('/api/articles')&&!['GET','HEAD'].includes(request.method()))articleWrites++;
+   if(['/api/articles','/api/editor/articles'].includes(url.pathname)&&!['GET','HEAD'].includes(request.method()))articleWrites++;
    if(url.pathname==='/api/articles'&&!url.search&&request.method()==='GET'){
     listGets++;
     return route.fulfill({contentType:'application/json',body:JSON.stringify({articles:[article]})});
@@ -396,7 +398,7 @@ try {
  }
  await page.setViewportSize({width:1440,height:1100});page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();
  await page.locator('#source-url').fill('https://example.org/new');await page.getByRole('button',{name:'URLから変換',exact:true}).click();await page.getByRole('status').filter({hasText:'Markdownに変換しました'}).waitFor();assert.equal(await page.locator('#preview-panel').isVisible(),true);
- let postCount=0;page.on('request',r=>{if(r.url().endsWith('/api/articles')&&r.method()==='POST')postCount++;});
+ let postCount=0;page.on('request',r=>{if(r.url().endsWith('/api/editor/articles')&&r.method()==='POST')postCount++;});
  await page.getByRole('button',{name:'下書き保存',exact:true}).evaluate(b=>{b.click();b.click();});await page.getByRole('status').filter({hasText:'下書きに保存しました'}).waitFor();assert.equal(postCount,1);
  await page.locator('.rights-check input').check();await page.getByRole('button',{name:'公開する',exact:true}).click();await page.getByRole('status').filter({hasText:'公開しました'}).waitFor();
  assert.equal(await page.locator('.document-status').textContent(),'公開中');assert.equal(await page.getByRole('button',{name:'非公開で保存',exact:true}).isEnabled(),true);

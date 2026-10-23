@@ -10,7 +10,7 @@ const articles=[
  ['0dde42b8-355d-4c85-8cd8-a34534a97eb6','夜の読書ノート','# 夜の読書ノート\n\n明日のための、小さな読書。']
 ];
 for(const [i,[id,title,markdown]] of articles.entries())db.prepare('INSERT INTO articles (id,title,source_url,markdown,published,created_at,updated_at,published_at) VALUES (?,?,?,?,?,?,?,?)').run(id,title,'https://example.org/note',markdown,0,`2026-10-0${9-i}T10:24:00Z`,`2026-10-0${9-i}T10:24:00Z`,null);
-function prepare(sql,args=[]){return {bind(...a){return prepare(sql,a)},async all(){return {success:true,results:db.prepare(sql).all(...args)}},async first(){return db.prepare(sql).get(...args)||null},async run(){db.prepare(sql).run(...args);return {success:true}}};}
+function prepare(sql,args=[]){return {bind(...a){return prepare(sql,a)},async all(){return {success:true,results:db.prepare(sql).all(...args)}},async first(){return db.prepare(sql).get(...args)||null},async run(){const result=db.prepare(sql).run(...args);return {success:true,meta:{changes:Number(result.changes)}}}};}
 const env={DB:{prepare},ASSETS:{async fetch(req){const path=new URL(req.url).pathname;const types={'.css':'text/css','.js':'application/javascript','.svg':'image/svg+xml'};return new Response(readFileSync(new URL('public'+path,root)),{headers:{'Content-Type':types[path.slice(path.lastIndexOf('.'))]||'application/octet-stream'}});}}};
 // Isolated loopback fixture. It has no production credentials, AI calls or D1 connection.
 const worker=createWorker({verifyOwner:async()=>({ok:true,status:200}),convert:async url=>({title:'変換した架空記事',sourceUrl:url,markdown:'# 変換した架空記事\n\nこれはブラウザー検証用の合成本文です。\n\n[架空の参考リンク](https://example.org/reference) [サイト内の記事](/p/sample-safe-reading)'})});

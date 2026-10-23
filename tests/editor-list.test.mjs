@@ -29,8 +29,9 @@ class TestBoundary extends Component{
 }
 window.confirm=message=>{confirmations.push(message);return false;};
 window.fetch=(url,options={})=>{
+ if(url==='/api/editor/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({protocol:'compare-v1'}));
  if(url==='/api/articles'&&(!options.method||options.method==='GET'))return new Promise((resolve,reject)=>gets.push({url,options,resolve,reject}));
- if(url==='/api/articles'&&options.method==='POST')return new Promise((resolve,reject)=>posts.push({url,options,resolve,reject}));
+ if(url==='/api/editor/articles'&&options.method==='POST')return new Promise((resolve,reject)=>posts.push({url,options,resolve,reject}));
  if(url==='/api/convert'&&options.method==='POST')return new Promise((resolve,reject)=>conversions.push({url,options,resolve,reject}));
  throw new Error('Unexpected synthetic request: '+url);
 };
@@ -58,7 +59,7 @@ async function rawReply(index,response){check(gets[index],'Missing deferred GET 
 async function reject(index,message='Synthetic list network failure'){check(gets[index],'Missing deferred GET '+index);await act(async()=>gets[index].reject(new Error(message)));}
 async function newDraft(){await click('＋ 新しい下書き');await edit('input[name="title"]','Unsaved synthetic title');await edit('#markdown-body','# Unsaved synthetic body');await edit('#source-url','https://source.example.test/unsaved');await act(async()=>element('.rights-check input').click());await click('プレビュー');}
 const sent=index=>JSON.parse(posts[index].options.body);
-async function acknowledge(index=0){const input=sent(index);await act(async()=>posts[index].resolve(Response.json({id:input.id,published:input.published,url:'/p/'+input.id})));}
+async function acknowledge(index=0){const input=sent(index);await act(async()=>posts[index].resolve(Response.json({protocol:'compare-v1',revision:'a'.repeat(64),id:input.id,published:input.published,url:'/p/'+input.id})));}
 const tests=[
  ['save refresh aborts superseded initial read and keeps only replacement deadline',async()=>{
   await newDraft();const old=gets[0];await click('下書き保存');await acknowledge();check(old.options.signal.aborted,'Superseded initial read not aborted');check(deadlines.size===1,'Superseded deadline not cleared');check(!gets[1].options.signal.aborted,'Replacement read was canceled');await reply(0,[saved]);busy();check(deadlines.size===1,'Late original cleared replacement deadline');await reply(1,[fresh]);settled();check(deadlines.size===0,'Replacement deadline leaked');
