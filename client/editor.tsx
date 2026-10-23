@@ -1,7 +1,9 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
+import {EDITOR_SAVE_PROTOCOL,editorRevision} from '../src/editor-save.mjs';
+import {confirmEditorSaveCapability} from './editor-save';
 const Link=({children,...props}:React.AnchorHTMLAttributes<HTMLAnchorElement>)=><a {...props}>{children}</a>;
-type ApiReply={error?:string;articles?:Article[];url?:string;id?:string;published?:boolean;markdown?:string;sourceUrl?:string;title?:string};
+type ApiReply={code?:string;protocol?:string;revision?:string;error?:string;articles?:Article[];url?:string;id?:string;published?:boolean;markdown?:string;sourceUrl?:string;title?:string};
 import {Markdown} from '../src/markdown';
 import {sample} from '../src/sample';
 import {articleLink} from '../src/navigation.mjs';
@@ -43,6 +45,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  function updateMarkdown(value:string){currentMarkdown.current=value;setMarkdown(value);}
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,updateMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
+ const savedRevision=useRef<Article|string|null>(null);
  const draftVersion=useRef(0),rightsVersion=useRef<number|null>(null),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
  const messageVersion=useRef(0),copyAttempt=useRef(0);
  // Every newer notice owns its result, including a save finishing while copying.
@@ -111,8 +114,8 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  }
  useEffect(()=>{function warn(e:BeforeUnloadEvent){if(dirty){e.preventDefault();e.returnValue='';}}window.addEventListener('beforeunload',warn);return ()=>window.removeEventListener('beforeunload',warn);},[dirty]);
  function mayLeave(){return !dirty||window.confirm('保存していない変更があります。破棄して記事を切り替えますか？');}
- function createNew(){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId('');setSelectedMeta(null);setTitle('');updateMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
- function openArticle(a:Article){if(saving.current||!mayLeave())return;setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setSelectedMeta({id:a.id,created_at:a.created_at});setTitle(a.title);updateMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
+ function createNew(){if(saving.current||!mayLeave())return;savedRevision.current=null;setPendingLink(null);draftChanged();setDirty(false);setId('');setSelectedMeta(null);setTitle('');updateMarkdown('');setSourceUrl('');setRights(false);setPublished(false);setShareUrl('');setMessage('新しい下書きです。');setTab('edit');}
+ function openArticle(a:Article){if(saving.current||!mayLeave())return;savedRevision.current=a;setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setSelectedMeta({id:a.id,created_at:a.created_at});setTitle(a.title);updateMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
  async function save(makePublic:boolean){
   if(busy||saving.current||conversion.current)return;
   // A queued edit must invalidate confirmation before React rerenders. Also
@@ -120,18 +123,30 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   if(makePublic&&(!rights||rightsVersion.current!==draftVersion.current||renderedDraftVersion!==draftVersion.current)){setMessage('本文・出典・ライセンスを確認し、公開確認にチェックしてください。');return;}
   // Keep mutation requests single-flight through list refresh. Newer queued edits
   // invalidate only the clean-state acknowledgement, not the server-side write.
+  const baseline=savedRevision.current;
   const pending={version:draftVersion.current};saving.current=pending;
   const active=()=>saving.current===pending;
   setBusy(true);setMessage('');
   const articleId=id||crypto.randomUUID();setId(articleId);
   const savedMessage=()=>`${makePublic?'公開しました。共有URLから、サインインなしで読めます。':'下書きに保存しました。公開ページには表示されません。'}${draftVersion.current!==pending.version?' 編集中の変更はまだ保存されていません。もう一度保存してください。':''}`;
   try {
-   const r=await fetch('/api/articles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:articleId,title,markdown,sourceUrl,published:makePublic,rightsConfirmed:rights})});const raw:unknown=await r.json();
+   await confirmEditorSaveCapability();
+   if(!active())return;
+   const expectedRevision=typeof baseline==='string'?baseline:baseline?await editorRevision(baseline):null;
+   if(!active())return;
+   const r=await fetch('/api/editor/articles',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({protocol:EDITOR_SAVE_PROTOCOL,expectedRevision,id:articleId,title,markdown,sourceUrl,published:makePublic,rightsConfirmed:rights})});const raw:unknown=await r.json();
    if(!active())return;
    if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('保存結果を確認できませんでした。本文は残っています。');
    const data=raw as ApiReply;
-   if(!r.ok)throw new Error(typeof data.error==='string'?data.error:'保存できませんでした。本文は残っています。');
-   if(data.id!==articleId||data.published!==makePublic||data.url!==`/p/${articleId}`)throw new Error('保存結果を確認できませんでした。本文は残っています。');
+   if(!r.ok){
+    // Refresh only the sidebar after a conflict. Never replace the draft or
+    // advance its baseline; opening the latest row still confirms discard.
+    if(r.status===409&&data.code==='EDITOR_CONFLICT')await load(active,firstPage(requestedPage.current.query)).catch(()=>false);
+    if(!active())return;
+    throw new Error(typeof data.error==='string'?data.error:'保存できませんでした。本文は残っています。');
+   }
+   if(data.protocol!==EDITOR_SAVE_PROTOCOL||typeof data.revision!=='string'||!/^[0-9a-f]{64}$/.test(data.revision)||data.id!==articleId||data.published!==makePublic||data.url!==`/p/${articleId}`)throw new Error('保存結果を確認できませんでした。本文は残っています。');
+   savedRevision.current=data.revision;
    if(draftVersion.current===pending.version)setDirty(false);
    setPublished(makePublic);setShareUrl(makePublic?`${window.location.origin}${data.url}`:'');setMessage(savedMessage());
    try{await load(active,firstPage(requestedPage.current.query));if(active())setMessage(savedMessage());}

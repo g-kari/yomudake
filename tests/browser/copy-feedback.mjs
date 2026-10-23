@@ -21,7 +21,11 @@ try{
   await page.route('**/*',async route=>{
    const request=route.request(),url=new URL(request.url());assert.equal(url.origin,origin,'No external network');
    if(url.pathname==='/api/articles'){
-    if(request.method()==='GET'){await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({articles:[first,second]})});return;}
+    assert.equal(request.method(),'GET','No unsafe legacy editor write');
+    await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({articles:[first,second]})});return;
+   }
+   if(url.pathname==='/api/editor/articles'){
+    if(request.method()==='GET'){await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({protocol:'compare-v1'})});return;}
     assert.equal(request.method(),'POST');posts++;if(scenario==='during-save')await saveGate;
     await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'合成の保存失敗。本文は残っています。'})});return;
    }

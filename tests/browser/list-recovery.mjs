@@ -27,6 +27,13 @@ const syntheticArticle = {
   updated_at: '2026-10-10T10:24:00Z',
   published_at: null,
 };
+// Real conditional saves need the exact persisted synthetic snapshot, not a
+// fabricated row that happened to share an ID with the fixture database.
+async function prepareSavedFixture(){
+ const response=await fetch(origin+'/api/articles',{method:'POST',redirect:'error',headers:{origin,'content-type':'application/json'},body:JSON.stringify({id:syntheticArticle.id,title:syntheticArticle.title,sourceUrl:syntheticArticle.source_url,markdown:syntheticArticle.markdown,published:false})});
+ assert.equal(response.status,200);assert.equal((await response.json()).id,syntheticArticle.id);
+ const listed=await fetch(origin+'/api/articles',{redirect:'error'});assert.equal(listed.status,200);const actual=(await listed.json()).articles.find(a=>a.id===syntheticArticle.id);assert.ok(actual);Object.assign(syntheticArticle,actual);
+}
 const results = [];
 const screenshots = [];
 const requests = [];
@@ -100,7 +107,7 @@ async function fixturePage(name) {
     }
     if (!['GET', 'HEAD'].includes(request.method())) {
       mutationCount++;
-      if (url.pathname === '/api/articles' && request.method() === 'POST' && allowedSave) {
+      if (url.pathname === '/api/editor/articles' && request.method() === 'POST' && allowedSave) {
         const payload = request.postDataJSON();
         assert.equal(payload.id, syntheticArticle.id);
         assert.equal(payload.title, allowedSave.title);
@@ -252,6 +259,7 @@ try {
   browser = await chromium.launch({headless: true, ...(executableOverride ? {executablePath} : {})});
 
   currentScenario = 'stalled initial read and saved refresh recover at the bounded deadline';
+  await prepareSavedFixture();
   const stalled = await fixturePage(currentScenario);
   await stalled.page.clock.install();
   const initialStall = stalled.plan(200, {articles: [syntheticArticle]}, true);
@@ -387,6 +395,7 @@ try {
   await empty.context.close();
 
   currentScenario = 'save acknowledgement survives failed list refresh and independent retries';
+  await prepareSavedFixture();
   const saved = await fixturePage(currentScenario);
   saved.plan();
   await saved.page.goto(`${origin}/admin`);

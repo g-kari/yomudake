@@ -17,8 +17,9 @@ const library=Array.from({length:205},(_,i)=>record(205-i));
 let root,gets=[],posts=[],conversions=[],confirms=[];
 window.confirm=message=>{confirms.push(message);return false;};
 window.fetch=(url,options={})=>{
+ if(url==='/api/editor/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({protocol:'compare-v1'}));
  if(String(url).startsWith('/api/articles')&&(!options.method||options.method==='GET'))return new Promise((resolve,reject)=>gets.push({url:String(url),options,resolve,reject}));
- if(url==='/api/articles'&&options.method==='POST')return new Promise((resolve,reject)=>posts.push({url,options,resolve,reject}));
+ if(url==='/api/editor/articles'&&options.method==='POST')return new Promise((resolve,reject)=>posts.push({url,options,resolve,reject}));
  if(url==='/api/convert')return new Promise((resolve,reject)=>conversions.push({url,options,resolve,reject}));
  throw new Error('Unexpected fixture request');
 };
@@ -47,7 +48,7 @@ async function reply(index,body,status=200){await act(async()=>gets[index].resol
 async function answer(index,records=library){
  const u=new URL(gets[index].url,'https://reader.example.test'),q=u.searchParams.get('q')||'',cursor=u.searchParams.get('cursor');const body=payload(records,q,cursor);await reply(index,body);return body;
 }
-async function acknowledge(index=0){const data=JSON.parse(posts[index].options.body);await act(async()=>posts[index].resolve(Response.json({id:data.id,published:data.published,url:'/p/'+data.id})));}
+async function acknowledge(index=0){const data=JSON.parse(posts[index].options.body);await act(async()=>posts[index].resolve(Response.json({protocol:'compare-v1',revision:'a'.repeat(64),id:data.id,published:data.published,url:'/p/'+data.id})));}
 async function setup(){gets=[];posts=[];conversions=[];confirms=[];root=createRoot(element('#root'));await act(async()=>root.render(<Editor signOutPath="/synthetic-signout"/>));check(gets.length===1,'Wrong initial GET count');}
 async function newDraft(){await click('＋ 新しい下書き');await edit('input[name="title"]','Unsaved title');await edit('#markdown-body','# Unsaved body');await edit('#source-url','https://source.example.test/unsaved');await act(async()=>element('.rights-check input').click());await click('プレビュー');}
 const tests=[

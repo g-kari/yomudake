@@ -15,11 +15,12 @@ const saved={id:'c276dbe0-bdb7-47e0-8e6c-adfa3f8a7d8d',title:'Saved fixture',sou
 let root,posts=[],lists=[],conversions=[],deferInitial=false;
 window.confirm=()=>true;
 window.fetch=(url,options={})=>{
+ if(url==='/api/editor/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({protocol:'compare-v1'}));
  if(url==='/api/articles'&&(!options.method||options.method==='GET')){
   if(!deferInitial&&!lists.length){lists.push({initial:true});return Promise.resolve(Response.json({articles:[saved]}));}
   return new Promise((resolve,reject)=>{lists.push({url,options,resolve,reject});});
  }
- if(url==='/api/articles'&&options.method==='POST')return new Promise((resolve,reject)=>{posts.push({url,options,resolve,reject});});
+ if(url==='/api/editor/articles'&&options.method==='POST')return new Promise((resolve,reject)=>{posts.push({url,options,resolve,reject});});
  if(url==='/api/convert'&&options.method==='POST')return new Promise((resolve,reject)=>{conversions.push({url,options,resolve,reject});});
  throw new Error('Unexpected request: '+url);
 };
@@ -33,12 +34,24 @@ const rights=()=>element('.rights-check input');
 const values=()=>({title:title().value,body:body().value,url:url().value,rights:rights().checked});
 const equal=(actual,expected,label)=>check(JSON.stringify(actual)===JSON.stringify(expected),label+': '+JSON.stringify(actual)+' != '+JSON.stringify(expected));
 const unloadWarns=()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;};
-async function click(text){await act(async()=>{button(text).click();});}
+async function click(text){
+ const target=button(text),previous=posts.length,wasEnabled=!target.disabled;
+ await act(async()=>{button(text).click();});
+ // WebCrypto is a real asynchronous dependency before the deferred POST.
+ // Wait for that observable boundary, not an arbitrary sleep or mocked digest.
+ if(wasEnabled&&['下書き保存','公開する','公開内容を更新','非公開で保存'].includes(text)){
+  const deadline=Date.now()+1000;
+  while(posts.length===previous&&target.disabled&&!document.querySelector('[aria-label="記事の保存と公開"] .notice')?.textContent){
+   check(Date.now()<deadline,'Save did not reach POST or a visible error');
+   await act(async()=>{await new Promise(resolve=>setImmediate(resolve));});
+  }
+ }
+}
 async function edit(selector,value){await act(async()=>{const target=element(selector);const prototype=target instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value').set.call(target,value);target.dispatchEvent(new Event('input',{bubbles:true}));});}
 async function setup(defer=false){posts=[];lists=[];conversions=[];deferInitial=defer;root=createRoot(element('#root'));await act(async()=>{root.render(<Editor signOutPath="/synthetic-signout"/>);});}
 async function newDraft(){await click('＋ 新しい下書き');await edit('input[name="title"]','My edited title');await edit('#markdown-body','# My edited body');await edit('#source-url','https://source.example.test/new');}
 const sent=index=>JSON.parse(posts[index].options.body);
-async function acknowledge(index=0,data,status=200){const input=sent(index);await act(async()=>{posts[index].resolve(Response.json(data===undefined?{id:input.id,published:input.published,url:'/p/'+input.id}:data,{status}));});}
+async function acknowledge(index=0,data,status=200){const input=sent(index);await act(async()=>{posts[index].resolve(Response.json(data===undefined?{protocol:'compare-v1',revision:'a'.repeat(64),id:input.id,published:input.published,url:'/p/'+input.id}:data,{status}));});}
 async function listReply(index,articles=[saved],status=200){await act(async()=>{lists[index].resolve(Response.json(status===200?{articles}:{error:'Synthetic list failure'},{status}));});}
 async function rejectPost(index,message){await act(async()=>{posts[index].reject(new Error(message));});}
 

@@ -17,8 +17,9 @@ let root,copies=[],posts=[],lists=[],conversions=[],confirmations=[],accept=true
 Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:value=>new Promise((resolve,reject)=>copies.push({value,resolve,reject}))}});
 window.confirm=message=>{confirmations.push(message);return accept;};
 window.fetch=(url,options={})=>{
+ if(url==='/api/editor/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({protocol:'compare-v1'}));
  if(url==='/api/articles'&&(!options.method||options.method==='GET')){lists.push({url,options});return Promise.resolve(Response.json({articles:[first,second]}));}
- if(url==='/api/articles'&&options.method==='POST')return new Promise(resolve=>posts.push({url,options,resolve}));
+ if(url==='/api/editor/articles'&&options.method==='POST')return new Promise(resolve=>posts.push({url,options,resolve}));
  if(url==='/api/convert'&&options.method==='POST')return new Promise(resolve=>conversions.push({url,options,resolve}));
  throw new Error('Unexpected synthetic request: '+url);
 };
@@ -29,12 +30,22 @@ const notice=()=>document.querySelector('.notice')?.textContent||'';
 const unloadWarns=()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;};
 const snapshot=()=>({title:element('input[name="title"]').value,markdown:element('#markdown-body').value,source:element('#source-url').value,rights:element('.rights-check input').checked,dirty:unloadWarns(),status:element('.document-status').textContent,share:document.querySelector('#share-url')?.value||'',tab:element('.writing-surface').className});
 const equal=(a,b,message)=>check(JSON.stringify(a)===JSON.stringify(b),message+': '+JSON.stringify(a)+' != '+JSON.stringify(b));
-async function click(text){await act(async()=>button(text).click());}
+async function click(text){
+ const target=button(text),previous=posts.length,wasEnabled=!target.disabled;
+ await act(async()=>target.click());
+ if(wasEnabled&&['下書き保存','公開する','公開内容を更新','非公開で保存'].includes(text)){
+  const deadline=Date.now()+1000;
+  while(posts.length===previous&&target.disabled&&!notice()){
+   check(Date.now()<deadline,'Save did not reach POST or a visible error');
+   await act(async()=>{await new Promise(resolve=>setImmediate(resolve));});
+  }
+ }
+}
 async function edit(selector,value){await act(async()=>{const target=element(selector),prototype=target instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value').set.call(target,value);target.dispatchEvent(new Event('input',{bubbles:true}));});}
 async function unmount(){if(root){await act(async()=>root.unmount());root=null;}}
 async function setup(){copies=[];posts=[];lists=[];conversions=[];confirmations=[];accept=true;root=createRoot(element('#root'));await act(async()=>root.render(<Editor signOutPath="/synthetic-signout"/>));await click('First public fixture公開中 · 2026-10-09');}
 async function settle(copy,outcome){await act(async()=>outcome==='success'?copy.resolve():copy.reject(new Error('Synthetic private clipboard failure')));}
-async function saveReply(outcome){const pending=posts[0],input=JSON.parse(pending.options.body);await act(async()=>pending.resolve(Response.json(outcome==='success'?{id:input.id,published:false,url:'/p/'+input.id}:{error:'Synthetic save rejection'},{status:outcome==='success'?200:503})));}
+async function saveReply(outcome){const pending=posts[0],input=JSON.parse(pending.options.body);await act(async()=>pending.resolve(Response.json(outcome==='success'?{protocol:'compare-v1',revision:'a'.repeat(64),id:input.id,published:false,url:'/p/'+input.id}:{error:'Synthetic save rejection'},{status:outcome==='success'?200:503})));}
 async function preserveNotice(copy,outcome){const expected=notice(),before=snapshot(),network={posts:posts.length,lists:lists.length,conversions:conversions.length},copyCount=copies.length;await settle(copy,outcome);equal(snapshot(),before,'Late copy changed current document');equal({posts:posts.length,lists:lists.length,conversions:conversions.length},network,'Late copy issued or replayed a request');check(copies.length===copyCount,'Late copy retried clipboard');check(notice()===expected,'Late copy replaced current notice: '+JSON.stringify({expected,actual:notice()}));check(!document.body.textContent.includes('Synthetic private clipboard failure'),'Raw clipboard error leaked');}
 const tests=[
  ...['success','failure'].map(outcome=>['same-view clipboard '+outcome+' keeps existing feedback and exact public URL',async()=>{await click('コピー');check(copies.length===1&&copies[0].value===window.location.origin+'/p/'+first.id,'Clipboard did not receive exact public URL');const before=snapshot();await settle(copies[0],outcome);equal(snapshot(),before,'Clipboard result changed document');check(notice()===(outcome==='success'?'共有URLをコピーしました。':'コピーできませんでした。表示されたURLを選択してコピーしてください。'),'Current clipboard feedback missing');check(posts.length===0&&lists.length===1&&conversions.length===0,'Copy made an API request');}]),
