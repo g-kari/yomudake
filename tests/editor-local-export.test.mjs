@@ -12,12 +12,13 @@ import {createRoot} from 'react-dom/client';
 import Editor from './client/editor';
 window.IS_REACT_ACT_ENVIRONMENT=true;
 const saved={id:'c276dbe0-bdb7-47e0-8e6c-adfa3f8a7d8d',title:'Saved fixture',source_url:'https://source.example.test/saved',markdown:'# Saved body',published:1,created_at:'2026-10-09T00:00:00Z',updated_at:'2026-10-09T00:00:00Z',published_at:'2026-10-09T00:00:00Z'};
-let root,posts=[],lists=[],conversions=[],deferInitial=false;
-window.confirm=()=>true;
+const other={...saved,id:'dcbe3c20-d502-44dd-b8c4-356585b3985d',title:'Other fixture'};
+let root,posts=[],lists=[],conversions=[],deferInitial=false,accept=true;
+window.confirm=()=>accept;
 window.fetch=(url,options={})=>{
  if(url==='/api/editor/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({protocol:'compare-v1'}));
  if(url==='/api/articles'&&(!options.method||options.method==='GET')){
-  if(!deferInitial&&!lists.length){lists.push({initial:true});return Promise.resolve(Response.json({articles:[saved]}));}
+  if(!deferInitial&&!lists.length){lists.push({initial:true});return Promise.resolve(Response.json({articles:[saved,other]}));}
   return new Promise((resolve,reject)=>{lists.push({url,options,resolve,reject});});
  }
  if(url==='/api/editor/articles'&&options.method==='POST')return new Promise((resolve,reject)=>{posts.push({url,options,resolve,reject});});
@@ -48,7 +49,7 @@ async function click(text){
  }
 }
 async function edit(selector,value){await act(async()=>{const target=element(selector);const prototype=target instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value').set.call(target,value);target.dispatchEvent(new Event('input',{bubbles:true}));});}
-async function setup(defer=false){posts=[];lists=[];conversions=[];deferInitial=defer;root=createRoot(element('#root'));await act(async()=>{root.render(<Editor signOutPath="/synthetic-signout"/>);});}
+async function setup(defer=false){accept=true;posts=[];lists=[];conversions=[];deferInitial=defer;root=createRoot(element('#root'));await act(async()=>{root.render(<Editor signOutPath="/synthetic-signout"/>);});}
 async function newDraft(){await click('＋ 新しい下書き');await edit('input[name="title"]','My edited title');await edit('#markdown-body','# My edited body');await edit('#source-url','https://source.example.test/new');}
 const sent=index=>JSON.parse(posts[index].options.body);
 async function acknowledge(index=0,data,status=200){const input=sent(index);await act(async()=>{posts[index].resolve(Response.json(data===undefined?{protocol:'compare-v1',revision:'a'.repeat(64),id:input.id,published:input.published,url:'/p/'+input.id}:data,{status}));});}
@@ -56,6 +57,8 @@ async function listReply(index,articles=[saved],status=200){await act(async()=>{
 async function rejectPost(index,message){await act(async()=>{posts[index].reject(new Error(message));});}
 
 const exportButton=()=>button('Markdown本文を端末に書き出す');
+const exportNotice=()=>document.querySelector('[aria-label="編集中の本文の書き出し"] .notice')?.textContent||'';
+const saveNotice=()=>document.querySelector('.editor-main > .notice')?.textContent||'';
 const snapshots=[],revoked=[],clicks=[];let failAt='';
 const originalCreate=URL.createObjectURL,originalRevoke=URL.revokeObjectURL,originalClick=window.HTMLAnchorElement.prototype.click;
 URL.createObjectURL=blob=>{if(failAt==='create')throw new Error('private local error');const href='blob:synthetic-'+snapshots.length;snapshots.push({blob,href});return href;};
@@ -72,6 +75,23 @@ const tests=[
  ...['headers','success-body','error-body'].map(phase=>['export during pending save '+phase+' does not replay/cancel/acknowledge mutation',async()=>{await newDraft();await edit('#markdown-body',raw);await click('下書き保存');if(phase!=='headers')await act(async()=>{posts[0].resolve({ok:phase==='success-body',json:()=>new Promise(()=>{})});});check(body().disabled&&!exportButton().disabled,'Export inaccessible during save');await exportSnapshot();check(await snapshots.at(-1).blob.text()===raw,'Pending draft changed');check(posts.length===1&&body().disabled&&unloadWarns(),'Export released/acknowledged unknown save');check(!document.querySelector('[aria-label="記事の保存と公開"] .notice'),'False server notice');}]),
  ...['create','click'].map(failure=>['local '+failure+' failure preserves draft and reports no false save',async()=>{await newDraft();const before=values();failAt=failure;await exportSnapshot();failAt='';equal(values(),before,'Failure changed draft');check(document.querySelector('[aria-label="編集中の本文の書き出し"]').textContent.includes('本文を書き出せませんでした'),'No honest error');check(!document.body.textContent.includes('private local error'),'Raw local exception leaked');check(unloadWarns()&&posts.length===0,'Failure changed save state');check(!document.querySelector('a[download]'),'Failure left anchor');}]),
 ];
+
+for(const outcome of ['success','failure']){
+ const establish=async()=>{await click('Saved fixture公開中 · 2026-10-09');failAt=outcome==='failure'?'create':'';await exportSnapshot();failAt='';check(Boolean(exportNotice()),'Initial export feedback missing');};
+ const cleared=()=>{check(!exportNotice(),'Old document export feedback survived');check(posts.length===0,'Feedback update submitted a save');};
+ tests.push(
+  [outcome+' export feedback clears on a new draft',async()=>{await establish();await click('＋ 新しい下書き');cleared();check(!body().value&&!unloadWarns(),'New draft behavior changed');}],
+  [outcome+' export feedback clears on another article even with identical body bytes',async()=>{await establish();await click('Other fixture公開中 · 2026-10-09');cleared();check(body().value===other.markdown&&title().value===other.title,'Other article not opened');}],
+  [outcome+' export feedback does not revive after an article roundtrip',async()=>{await establish();await click('Other fixture公開中 · 2026-10-09');await click('Saved fixture公開中 · 2026-10-09');cleared();}],
+  [outcome+' export feedback clears when the current body changes',async()=>{await establish();await edit('#markdown-body','# New unsaved body');cleared();check(unloadWarns(),'Editing body lost dirty warning');}],
+  [outcome+' export feedback remains cleared when an edit returns to the exported bytes',async()=>{await establish();await edit('#markdown-body','# Temporary body');await edit('#markdown-body',saved.markdown);cleared();}],
+  [outcome+' export feedback clears on accepted conversion with identical body bytes',async()=>{await establish();await click('URLから変換');check(Boolean(exportNotice()),'Conversion start cleared unchanged body feedback');await act(async()=>conversions[0].resolve(Response.json({title:'Converted synthetic fixture',markdown:saved.markdown,sourceUrl:'https://source.example.test/converted'})));cleared();check(title().value==='Converted synthetic fixture'&&saveNotice().includes('Markdownに変換しました。')&&unloadWarns(),'Conversion result changed');}],
+  [outcome+' export feedback survives non-body edits, view changes and canceled discard',async()=>{await establish();const expected=exportNotice();await edit('input[name="title"]','Updated title');await edit('#source-url','https://source.example.test/updated');await act(async()=>rights().click());await click('Markdown');await click('プレビュー');accept=false;const before=values();await click('＋ 新しい下書き');equal(values(),before,'Canceled leave changed draft');check(exportNotice()===expected,'Unchanged body export feedback unnecessarily cleared');check(unloadWarns()&&posts.length===0,'Unchanged body control changed save state');}],
+  [outcome+' export feedback survives a rejected conversion without replacing its error',async()=>{await establish();const expected=exportNotice();await click('URLから変換');await act(async()=>conversions[0].resolve(Response.json({error:'Synthetic conversion rejection'},{status:503})));check(exportNotice()===expected&&body().value===saved.markdown,'Rejected conversion changed export/body');check(saveNotice()==='Synthetic conversion rejection','Export hid conversion error');}],
+ );
+}
+tests.push(['same-tick body edit clears the previous export notice before a fresh export',async()=>{await newDraft();await exportSnapshot();await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'# Same tick replacement');target.dispatchEvent(new Event('input',{bubbles:true}));exportButton().click();});check(await snapshots.at(-1).blob.text()==='# Same tick replacement','Repeated export used old body');check(Boolean(exportNotice())&&unloadWarns()&&posts.length===0,'Fresh export feedback not owned by latest body');}]);
+
 const results=[];
 async function run(){for(const [name,operation,defer] of tests){try{snapshots.length=0;revoked.length=0;clicks.length=0;failAt="";await setup(Boolean(defer));await operation();results.push({name,ok:true});}catch(error){results.push({name,ok:false,error:error.stack||String(error)});}finally{if(root){await act(async()=>{root.unmount();});root=null;}}}URL.createObjectURL=originalCreate;URL.revokeObjectURL=originalRevoke;window.HTMLAnchorElement.prototype.click=originalClick;document.querySelector('#result').textContent=JSON.stringify({results});}
 window.editorLocalExportDone=run().catch(error=>{document.querySelector('#result').textContent=JSON.stringify({fatal:error.stack||String(error),results});});
@@ -91,7 +111,7 @@ test('actual Editor local body exports preserve drafts and pending save ownershi
   await window.editorLocalExportDone;
   const report=JSON.parse(window.document.querySelector('#result').textContent);
   assert.ok(!report.fatal,report.fatal);
-  assert.equal(report.results.length,9,'Incomplete save coverage');
+  assert.equal(report.results.length,26,'Incomplete save coverage');
   for(const result of report.results)await t.test(result.name,()=>assert.equal(result.ok,true,result.error));
  }finally{
   await window.happyDOM.close();
