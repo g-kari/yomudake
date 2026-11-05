@@ -33,7 +33,7 @@ test('conversion and the outbound-link selector retain URL bytes after synthetic
  assert.deepEqual(markdownExternalLinks(result.markdown,origin),destinations);
 });
 test('angle destinations retain the existing link safety and inert image policy',()=>{
- for(const markdown of ['[x](<https://article.example/path)','[x](<https://article.example/path>suffix)','[x](<<https://article.example/path>>)','[x](<https://article.example/space path>)']){
+ for(const markdown of ['[x](<https://article.example/path)','[x](<https://article.example/path>suffix)','[x](<<https://article.example/path>>)','[x](<https://article.example/space path>)','[x](<https://article.example/a<bc>)','[x](<https://article.example/a>>)','[x](<https://article.example/path>suffix>)']){
   assert.deepEqual(markdownExternalLinks(markdown,origin),[]);
   assert.equal(markdownToHtml(markdown,{origin}).includes('<a '),false);
  }

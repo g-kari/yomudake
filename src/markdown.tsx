@@ -39,7 +39,7 @@ function inline(text:string, options:LinkOptions, depth=0):React.ReactNode[] {
   else if(match[1].startsWith('[')) {
    // Angle destinations keep literal parentheses. Only the Markdown pipe
    // escape is removed; URL percent escapes are never decoded or rewritten.
-   const destination=match[3].startsWith('<')&&match[3].endsWith('>')?match[3].slice(1,-1).replace(/\\\|/g,'|'):match[3];
+   const destination=/^<[^<>\s]+>$/.test(match[3])?match[3].slice(1,-1).replace(/\\\|/g,'|'):match[3];
    const link=articleLink(destination,options.origin);
    result.push(link ? link.external&&options.renderExternal?options.renderExternal(link.href,match[2],key):<a key={key} href={link.href} {...(link.external?{target:'_blank',rel:'noopener noreferrer nofollow',referrerPolicy:'no-referrer' as const}:{})}>{match[2]}</a>:<span key={key}>{match[2]}［リンク無効］</span>);
   } else if(match[4]) result.push(<code key={key}>{match[4]}</code>);
