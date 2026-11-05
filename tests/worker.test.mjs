@@ -49,6 +49,51 @@ test('real conversion handler safely distinguishes DNS, source and AI dependency
   }
  }finally{globalThis.fetch=originalFetch;}
 });
+test('converted link reaches the exact source URI through public HTML and its confirmation page',async()=>{
+ const {convertUrl}=await import('../src/conversion.mjs');
+ const destinations=['https://article.example/Function_(math)?kind=a|b&kept=%28encoded%29#part(2)','https://article.example/%28encoded%29?x=%7C&double=%2528'];
+ for(const destination of destinations){
+  const converted=await convertUrl('https://article.example/original',{AI:{async toMarkdown(){return {format:'markdown',data:'| 出典 | 説明 |\n| --- | --- |\n| [出典](#yomudake-link-0) | 保持 |'};}}},{resolveHostname:async()=>['93.184.215.14'],fetcher:async()=>new Response('<article><p><a href="'+destination.replace(/&/g,'&amp;')+'">出典</a></p></article>',{headers:{'content-type':'text/html'}})});
+  const env={DB:database()};
+  const article={...data,...converted,published:true,rightsConfirmed:true};
+  assert.equal((await worker.fetch(request('/api/articles','POST',article,true),env)).status,200);
+  for(const path of ['/p/'+data.id,'/export/'+data.id+'?format=html']){
+   const page=await worker.fetch(request(path),env);assert.equal(page.status,200);
+   const body=await page.text();
+   assert.equal((body.match(/<td/g)||[]).length,2);assert.match(body,/<td>保持<\/td>/);
+   const match=/href="([^"]+\/out\/[^\/]+\/link-0\?rev=[0-9a-f]+)"/.exec(body);assert.ok(match);
+   const confirmation=await worker.fetch(new Request(match[1]),env);assert.equal(confirmation.status,200);
+   const warning=await confirmation.text();
+   assert.ok(warning.includes('href="'+destination.replace(/&/g,'&amp;')+'" target="_blank"'));
+   assert.ok(!warning.includes('Function_%28math%29'));
+  }
+ }
+});
+test('old HTML ordinal confirmations fail closed after the angle-link renderer change',async()=>{
+ const env={DB:database()},markdown='[new angle](<https://added.example/a(b)>)\n\n[existing](https://existing.example/path)';
+ await worker.fetch(request('/api/articles','POST',{...data,sourceUrl:'',markdown,published:true},true),env);
+ const saved=(await (await worker.fetch(request('/api/articles','GET',undefined,true),env)).json()).articles.find(a=>a.id===data.id);assert.ok(saved);
+ // The prior renderer omitted the angle link, so its link-0 meant existing.
+ // Independently calculate its unchanged-content revision, not a new token.
+ const oldBytes=new TextEncoder().encode(JSON.stringify([saved.updated_at,saved.source_url,saved.markdown]));
+ const oldDigest=await crypto.subtle.digest('SHA-256',oldBytes);
+ const oldRevision=Array.from(new Uint8Array(oldDigest),x=>x.toString(16).padStart(2,'0')).join('');
+ const oldUrl=origin+'/out/'+data.id+'/link-0?rev='+oldRevision;
+ const oldResponse=await worker.fetch(new Request(oldUrl),env);assert.equal(oldResponse.status,404);
+ assert.equal(oldResponse.headers.get('location'),null);assert.ok(!(await oldResponse.text()).includes('<iframe'));
+ for(const path of ['/p/'+data.id,'/export/'+data.id+'?format=html']){
+  const html=await (await worker.fetch(request(path),env)).text();
+  const hrefs=[...html.matchAll(/href="([^"]+\/out\/[^\/]+\/link-[01]\?rev=[0-9a-f]+)"/g)].map(match=>match[1]);
+  assert.equal(hrefs.length,2);
+  for(const [index,destination] of ['https://added.example/a(b)','https://existing.example/path'].entries()){
+   assert.equal(new URL(hrefs[index]).pathname,'/out/'+data.id+'/link-'+index);
+   assert.notEqual(new URL(hrefs[index]).searchParams.get('rev'),oldRevision);
+   const fresh=await worker.fetch(new Request(hrefs[index]),env);assert.equal(fresh.status,200);
+   assert.ok((await fresh.text()).includes('href="'+destination+'" target="_blank"'));
+  }
+ }
+});
+
 test('HTTP handler with the real signature guard rejects other users before ingestion or storage mutation',async()=>{
  const keys=await generateKeyPair('RS256',{extractable:true});const jwk={...await exportJWK(keys.publicKey),kid:'synthetic-http-key',alg:'RS256'};
  const env={DB:database(),ACCESS_TEAM_DOMAIN:'https://synthetic-http.cloudflareaccess.com',ACCESS_AUD:'synthetic-http-audience',OWNER_EMAIL:'owner@example.test'};

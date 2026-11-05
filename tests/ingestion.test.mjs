@@ -14,3 +14,22 @@ test('conversion sends only sanitized HTML to binding and returns editable Markd
 test('unconnected conversion does not make any external request',async()=>{let called=false;await assert.rejects(convertUrl('https://article.example/a',{}, {fetcher:async()=>{called=true;return html();}}));assert.equal(called,false);});
 
 test('excessively deep external HTML is rejected without recursive stack overflow',()=>{assert.throws(()=>sanitizeConversionInput('<div>'.repeat(250)+'text'+'</div>'.repeat(250),'https://article.example/a'),error=>error.status===422);});
+test('restored link destinations preserve Markdown delimiters without changing URL data',()=>{
+ const destination="https://article.example/Function_(math)/[draft]?quote='value'&kind=a|b&kept=%28encoded%29#part(2)";
+ const quoted="<https://article.example/Function_(math)/[draft]?quote='value'&kind=a\\|b&kept=%28encoded%29#part(2)>";
+ for(const placeholder of ['#yomudake-link-0','https://yomudake.invalid#yomudake-link-0','https://yomudake.invalid/#yomudake-link-0']){
+  assert.equal(restoreLinks(`[出典](${placeholder})`,[destination]),`[出典](${quoted})`);
+ }
+ assert.equal(restoreLinks('[括弧](#yomudake-link-0) and [普通](#yomudake-link-1)',[destination,'https://article.example/plain?x=1&y=2']),`[括弧](${quoted}) and [普通](https://article.example/plain?x=1&y=2)`);
+ assert.equal(restoreLinks('[未知](#yomudake-link-2)',[destination]),'[未知](#yomudake-link-2)');
+ assert.equal(restoreLinks('[符号済み](#yomudake-link-0)',['https://article.example/%28encoded%29?x=%7C']), '[符号済み](https://article.example/%28encoded%29?x=%7C)');
+});
+
+test('converted table link retains the source URI with Markdown-only escaping',async()=>{
+ const destination='https://article.example/Function_(math)?kind=a|b#part(2)';
+ const source='<article><p><a href="'+destination+'">出典</a></p></article>';
+ const result=await convertUrl('https://article.example/original',{AI:{async toMarkdown(){return {format:'markdown',data:'| 出典 | 説明 |\n| --- | --- |\n| [出典](#yomudake-link-0) | 保持 |'};}}},{
+  resolveHostname,fetcher:async()=>new Response(source,{headers:{'content-type':'text/html'}}),
+ });
+ assert.equal(result.markdown,'| 出典 | 説明 |\n| --- | --- |\n| [出典](<https://article.example/Function_(math)?kind=a\\|b#part(2)>) | 保持 |');
+});

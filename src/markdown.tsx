@@ -30,14 +30,17 @@ const startsBlock=(line:string)=>/^\s*(#{1,6}\s|```|>|[-+*]\s|\d+\.\s)/.test(lin
 function inline(text:string, options:LinkOptions, depth=0):React.ReactNode[] {
  if(depth>3) return [text];
  const result:React.ReactNode[]=[];
- const re=/(!?\[([^\]\n]*)\]\(([^)\s]+)\)|`([^`\n]+)`|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*)/g;
+ const re=/(!?\[([^\]\n]*)\]\((<[^<>\s]+>|[^)\s]+)\)|`([^`\n]+)`|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*)/g;
  let start=0; let match:RegExpExecArray|null;
  while((match=re.exec(text))) {
   if(match.index>start) result.push(text.slice(start,match.index));
   const key=match.index;
   if(match[1].startsWith('![')) result.push(<span key={key} className="image-placeholder">［画像: {match[2] || '説明なし'}］</span>);
   else if(match[1].startsWith('[')) {
-   const link=articleLink(match[3],options.origin);
+   // Angle destinations keep literal parentheses. Only the Markdown pipe
+   // escape is removed; URL percent escapes are never decoded or rewritten.
+   const destination=/^<[^<>\s]+>$/.test(match[3])?match[3].slice(1,-1).replace(/\\\|/g,'|'):match[3];
+   const link=articleLink(destination,options.origin);
    result.push(link ? link.external&&options.renderExternal?options.renderExternal(link.href,match[2],key):<a key={key} href={link.href} {...(link.external?{target:'_blank',rel:'noopener noreferrer nofollow',referrerPolicy:'no-referrer' as const}:{})}>{match[2]}</a>:<span key={key}>{match[2]}［リンク無効］</span>);
   } else if(match[4]) result.push(<code key={key}>{match[4]}</code>);
   else if(match[5]) result.push(<strong key={key}>{inline(match[5],options,depth+1)}</strong>);

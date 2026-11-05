@@ -18,8 +18,11 @@ export function articleLink(value,origin='') {
  return {href,external:url.origin!==origin};
 }
 
+// Changing which Markdown links are recognized can reorder ordinal selectors.
+// Invalidate old HTML confirmations instead of silently changing their target.
+const LINK_RENDERING_VERSION='angle-destinations-v1';
 export async function articleRevision(article) {
- const data=new TextEncoder().encode(JSON.stringify([article.updated_at,article.source_url,article.markdown]));
+ const data=new TextEncoder().encode(JSON.stringify([LINK_RENDERING_VERSION,article.updated_at,article.source_url,article.markdown]));
  const digest=await crypto.subtle.digest('SHA-256',data);
  return Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join('');
 }
