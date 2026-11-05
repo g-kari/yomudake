@@ -49,6 +49,26 @@ test('real conversion handler safely distinguishes DNS, source and AI dependency
   }
  }finally{globalThis.fetch=originalFetch;}
 });
+test('converted link reaches the exact source URI through public HTML and its confirmation page',async()=>{
+ const {convertUrl}=await import('../src/conversion.mjs');
+ const destinations=['https://article.example/Function_(math)?kind=a|b&kept=%28encoded%29#part(2)','https://article.example/%28encoded%29?x=%7C&double=%2528'];
+ for(const destination of destinations){
+  const converted=await convertUrl('https://article.example/original',{AI:{async toMarkdown(){return {format:'markdown',data:'| 出典 | 説明 |\n| --- | --- |\n| [出典](#yomudake-link-0) | 保持 |'};}}},{resolveHostname:async()=>['93.184.215.14'],fetcher:async()=>new Response('<article><p><a href="'+destination.replace(/&/g,'&amp;')+'">出典</a></p></article>',{headers:{'content-type':'text/html'}})});
+  const env={DB:database()};
+  const article={...data,...converted,published:true,rightsConfirmed:true};
+  assert.equal((await worker.fetch(request('/api/articles','POST',article,true),env)).status,200);
+  for(const path of ['/p/'+data.id,'/export/'+data.id+'?format=html']){
+   const page=await worker.fetch(request(path),env);assert.equal(page.status,200);
+   const body=await page.text();
+   assert.equal((body.match(/<td/g)||[]).length,2);assert.match(body,/<td>保持<\/td>/);
+   const match=/href="([^"]+\/out\/[^\/]+\/link-0\?rev=[0-9a-f]+)"/.exec(body);assert.ok(match);
+   const confirmation=await worker.fetch(new Request(match[1]),env);assert.equal(confirmation.status,200);
+   const warning=await confirmation.text();
+   assert.ok(warning.includes('href="'+destination.replace(/&/g,'&amp;')+'" target="_blank"'));
+   assert.ok(!warning.includes('Function_%28math%29'));
+  }
+ }
+});
 test('HTTP handler with the real signature guard rejects other users before ingestion or storage mutation',async()=>{
  const keys=await generateKeyPair('RS256',{extractable:true});const jwk={...await exportJWK(keys.publicKey),kid:'synthetic-http-key',alg:'RS256'};
  const env={DB:database(),ACCESS_TEAM_DOMAIN:'https://synthetic-http.cloudflareaccess.com',ACCESS_AUD:'synthetic-http-audience',OWNER_EMAIL:'owner@example.test'};

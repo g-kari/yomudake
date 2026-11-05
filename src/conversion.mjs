@@ -27,7 +27,13 @@ export function sanitizeConversionInput(html,sourceUrl) {
  return {html:`<!doctype html><html><body><main>${walk(tree)}</main></body></html>`,links,title};
 }
 export function restoreLinks(markdown,links) {
- return markdown.replace(/\]\((?:https:\/\/yomudake\.invalid\/?)?#yomudake-link-(\d+)\)/g,(whole,n)=>links[Number(n)]?`](${links[Number(n)]})`:whole);
+ return markdown.replace(/\]\((?:https:\/\/yomudake\.invalid\/?)?#yomudake-link-(\d+)\)/g,(whole,n)=>{
+  const href=links[Number(n)];if(!href)return whole;
+  // Preserve URL bytes. Encoding reserved parentheses/pipes can select a
+  // different resource; quote the Markdown destination instead.
+  const destination=/[()|]/.test(href)?`<${href.replace(/\|/g,'\\|')}>`:href;
+  return `](${destination})`;
+ });
 }
 export async function convertUrl(value,env,{ownHost='',fetcher=fetch,resolveHostname,conversionTimeoutMs=30000}={}) {
  if(typeof env.AI?.toMarkdown!=='function')throw new IngestError('Cloudflareの変換機能が未接続です。',503,'CONVERSION_BINDING_MISSING');
