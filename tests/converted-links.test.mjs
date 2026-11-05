@@ -3,6 +3,7 @@ import {mkdirSync} from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {restoreLinks,convertUrl} from '../src/conversion.mjs';
+import {articleRevision} from '../src/navigation.mjs';
 mkdirSync('.sites-runtime',{recursive:true});
 await build({entryPoints:['src/export-html.ts'],bundle:true,platform:'node',format:'esm',outfile:'.sites-runtime/converted-links-test.mjs',jsx:'automatic'});
 const {markdownToHtml,markdownExternalLinks}=await import('../.sites-runtime/converted-links-test.mjs');
@@ -14,6 +15,13 @@ const destinations=[
  'https://article.example/%28encoded%29?x=%7C&double=%2528',
  'https://article.example/plain?x=1&y=2',
 ];
+test('link revisions invalidate confirmations made by the pre-angle renderer',async()=>{
+ const article={updated_at:'2026-10-10T00:00:00Z',source_url:'',markdown:'[new angle](<https://added.example/a(b)>)\n\n[existing](https://existing.example/path)'};
+ const oldBytes=new TextEncoder().encode(JSON.stringify([article.updated_at,article.source_url,article.markdown]));
+ const oldDigest=await crypto.subtle.digest('SHA-256',oldBytes);
+ const oldRevision=Array.from(new Uint8Array(oldDigest),x=>x.toString(16).padStart(2,'0')).join('');
+ assert.notEqual(await articleRevision(article),oldRevision);
+});
 test('converted paragraph and table links render the exact original URI',()=>{
  for(const destination of destinations){
   const link=restoreLinks('[出典](#yomudake-link-0)',[destination]);

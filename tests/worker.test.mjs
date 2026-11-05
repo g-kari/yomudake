@@ -69,6 +69,31 @@ test('converted link reaches the exact source URI through public HTML and its co
   }
  }
 });
+test('old HTML ordinal confirmations fail closed after the angle-link renderer change',async()=>{
+ const env={DB:database()},markdown='[new angle](<https://added.example/a(b)>)\n\n[existing](https://existing.example/path)';
+ await worker.fetch(request('/api/articles','POST',{...data,sourceUrl:'',markdown,published:true},true),env);
+ const saved=(await (await worker.fetch(request('/api/articles','GET',undefined,true),env)).json()).articles.find(a=>a.id===data.id);assert.ok(saved);
+ // The prior renderer omitted the angle link, so its link-0 meant existing.
+ // Independently calculate its unchanged-content revision, not a new token.
+ const oldBytes=new TextEncoder().encode(JSON.stringify([saved.updated_at,saved.source_url,saved.markdown]));
+ const oldDigest=await crypto.subtle.digest('SHA-256',oldBytes);
+ const oldRevision=Array.from(new Uint8Array(oldDigest),x=>x.toString(16).padStart(2,'0')).join('');
+ const oldUrl=origin+'/out/'+data.id+'/link-0?rev='+oldRevision;
+ const oldResponse=await worker.fetch(new Request(oldUrl),env);assert.equal(oldResponse.status,404);
+ assert.equal(oldResponse.headers.get('location'),null);assert.ok(!(await oldResponse.text()).includes('<iframe'));
+ for(const path of ['/p/'+data.id,'/export/'+data.id+'?format=html']){
+  const html=await (await worker.fetch(request(path),env)).text();
+  const hrefs=[...html.matchAll(/href="([^"]+\/out\/[^\/]+\/link-[01]\?rev=[0-9a-f]+)"/g)].map(match=>match[1]);
+  assert.equal(hrefs.length,2);
+  for(const [index,destination] of ['https://added.example/a(b)','https://existing.example/path'].entries()){
+   assert.equal(new URL(hrefs[index]).pathname,'/out/'+data.id+'/link-'+index);
+   assert.notEqual(new URL(hrefs[index]).searchParams.get('rev'),oldRevision);
+   const fresh=await worker.fetch(new Request(hrefs[index]),env);assert.equal(fresh.status,200);
+   assert.ok((await fresh.text()).includes('href="'+destination+'" target="_blank"'));
+  }
+ }
+});
+
 test('HTTP handler with the real signature guard rejects other users before ingestion or storage mutation',async()=>{
  const keys=await generateKeyPair('RS256',{extractable:true});const jwk={...await exportJWK(keys.publicKey),kid:'synthetic-http-key',alg:'RS256'};
  const env={DB:database(),ACCESS_TEAM_DOMAIN:'https://synthetic-http.cloudflareaccess.com',ACCESS_AUD:'synthetic-http-audience',OWNER_EMAIL:'owner@example.test'};
