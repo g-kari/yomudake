@@ -1,3 +1,19 @@
+## 2026-11-06: HTTP依存の追加セキュリティ修正を適用
+
+- Miniflare配下のundici限定overrideを7.30.1から7.30.2へ進めます。Miniflare・Wrangler・workerd・アプリ本体・CI条件は変更しません。
+- 公式の[7.30.2リリース](https://github.com/nodejs/undici/releases/tag/v7.30.2)は別の6勧告を修正します。[Highのredirect/cache問題](https://github.com/nodejs/undici/security/advisories/GHSA-mqg3-3v4r-cm32)にはoriginless Agent・共有cache・特定のinterceptor順が必要で、今回のアプリと確認したMiniflare経路にはその組合せを使っていません。本番の被害や全依存の安全性を実証したという意味ではありません。
+- 前回の過剰なContent-Encoding/途中切断の子プロセス回帰を保持し、ASCII空白を含むSRI metadataの照合をloopback上の固定合成本文で追加検証します。実アプリのSRI利用や認証済み記事を試すものではありません。
+
+## 未リリース: MCP専用Access設定の案内を整合
+
+- READMEの本番セットアップで、管理画面・管理APIの `ACCESS_AUD` と、本番向け `/api/mcp` 専用の `MCP_ACCESS_AUD` を区別します。専用Accessアプリ・OAuth・接続設定に必要な承認と検証は既存のMCP接続文書を参照してください。
+- 文書の訂正だけです。認証処理・実環境のAccess設定・認証情報・権限・依存関係・配備は変更しません。
+
+## 2026-11-06: CIのpnpmセットアップ固定を更新
+
+- CIの pnpm/action-setup v6 を公式commit `73e46992e05b19abd31f2f3c20e0e7370d762115` へ固定。プロジェクトの pnpm 11.25.0、Node 24、frozen install と既存の型・全unit・build・browser検証を保持します。
+- CIの権限、10分制限、キャッシュ設定、アプリ・依存lock・認証・本番配備設定は変更しません。
+
 ## 2026-11-06: ローカル検証のHTTP依存を修正版へ固定
 
 - Miniflare 5.20261006.1-alpha 配下の undici だけを 7.29.1 から 7.30.1 へ更新。親版を限定した pnpm override を使い、Miniflare・Wrangler・workerd・Node要件・許可済みの依存buildは変更しません。将来Miniflareを更新する際は、この限定overrideと検証契約も見直してください。

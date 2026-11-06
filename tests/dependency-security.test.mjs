@@ -12,8 +12,20 @@ const childFixture = fileURLToPath(new URL('./fixtures/undici-response-child.cjs
 
 test('direct and Wrangler Miniflare resolve the patched undici without changing workerd', () => {
   for (const parent of [direct, viaWrangler]) {
-    assert.equal(parent('undici/package.json').version, '7.30.1');
+    assert.equal(parent('undici/package.json').version, '7.30.2');
     assert.equal(parent('workerd/package.json').version, '1.20261006.1');
+  }
+});
+
+test('Miniflare undici verifies SRI metadata separated by ASCII whitespace', () => {
+  const paths = new Set([direct.resolve('undici'), viaWrangler.resolve('undici')]);
+  const fixture = fileURLToPath(new URL('./fixtures/undici-integrity-child.cjs', import.meta.url));
+  for (const path of paths) {
+    const child = spawnSync(process.execPath, [fixture, path], {encoding: 'utf8', timeout: 5000});
+    assert.equal(child.error, undefined, 'Synthetic SRI child must finish within its bound');
+    assert.equal(child.signal, null, 'Synthetic SRI child must not be terminated');
+    assert.equal(child.status, 0, 'SRI must reject wrong digests and accept matching digests');
+    assert.match(child.stdout, /integrity-cases-passed: 11/);
   }
 });
 
