@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "jose": "6.2.15",
-    "parse5": "8.0.1",
+    "parse5": "8.1.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
   },
