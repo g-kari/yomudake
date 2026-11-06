@@ -1,3 +1,9 @@
+## 2026-11-06: ローカル検証のHTTP依存を修正版へ固定
+
+- Miniflare 5.20261006.1-alpha 配下の undici だけを 7.29.1 から 7.30.1 へ更新。親版を限定した pnpm override を使い、Miniflare・Wrangler・workerd・Node要件・許可済みの依存buildは変更しません。将来Miniflareを更新する際は、この限定overrideと検証契約も見直してください。
+- 公式の [undici 7.30.1](https://github.com/nodejs/undici/releases/tag/v7.30.1) は過剰なContent-Encodingと途中切断によるプロセス停止などを修正します。loopbackだけの子プロセス回帰と、direct/Wrangler両経路の実module解決を検証します。
+- これは開発・合成試験用依存の修正です。本番Workerのnative fetch、Node内蔵fetch、全ツールチェーンの脆弱性解消や実環境の安全性を証明するものではありません。認証・本番設定・データ・CI条件は変更しません。
+
 ## 2026-11-05: URL変換の括弧・縦棒を含むリンクを保持
 
 - 変換元のURLに括弧があると途中までがリンクになり、縦棒があると比較表の列が崩れる不具合を修正。
