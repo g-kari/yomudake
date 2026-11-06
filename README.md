@@ -61,7 +61,7 @@ Sitesや特定の他アプリのOAuth、APIトークンには依存しません�
 
 Node.js 24以上を使用します。
 
-pnpm 11.25.0を使用します。未導入なら `npm install --global pnpm@11.25.0` で固定版を準備してください。依存関係は `pnpm-lock.yaml` を正として、CIと同じfrozen installを使います。Node.jsの既存要件は変更しません。
+pnpm 11.28.11を使用します。未導入なら `npm install --global pnpm@11.28.11` で固定版を準備してください。依存関係は `pnpm-lock.yaml` を正として、CIと同じfrozen installを使います。Node.jsの既存要件は変更しません。
 
 1. `pnpm install --frozen-lockfile`
 2. `pnpm run check`（管理UIの型チェック、合成データのテスト、本番ビルド）
@@ -111,8 +111,8 @@ pnpm 11.25.0を使用します。未導入なら `npm install --global pnpm@11.2
 
 1. 専用D1 `yomudake-articles` と Worker ルートは `wrangler.jsonc` に記載済み。`migrations/0001_articles.sql` は本番 D1 に手動適用済み。**Workers Builds / `wrangler deploy` はマイグレーションを実行しません。** `wrangler d1 migrations apply` を使う場合は、先に `d1_migrations` に `0001` 行を挿入しないと二重適用になる可能性があります。
 2. AI bindingは `wrangler.jsonc` の `ai` binding で接続
-3. 1つの管理用Accessアプリで `/admin` と `/api/*` の両方を保護し、同じAUDを使用。許可する所有者は1人だけ。公開記事ルート `/p/*` はAccessで囲わない
-4. `ACCESS_TEAM_DOMAIN` と `ACCESS_AUD` は `wrangler.jsonc` の `vars`。`OWNER_EMAIL` は Worker **secret**（`wrangler secret put OWNER_EMAIL` など）で別途設定し、リポジトリに書かない
+3. `/admin` と管理APIは管理用Accessアプリの `ACCESS_AUD` で保護。本番向け設定では `/api/mcp` は例外で、専用Accessアプリと別の `MCP_ACCESS_AUD` を使用します。専用アプリ・OAuth・接続設定に必要な承認と検証は [所有者用MCPの認証と接続](docs/mcp.md#認証と接続) を参照。許可する所有者は1人だけ。公開記事ルート `/p/*` はAccessで囲わない
+4. `ACCESS_TEAM_DOMAIN`、`ACCESS_AUD`、`MCP_ACCESS_AUD` は `wrangler.jsonc` の `vars`。`OWNER_EMAIL` は Worker **secret**（`wrangler secret put OWNER_EMAIL` など）で別途設定し、リポジトリに書かない
 5. `global_fetch_strictly_public` を維持し、VPC・内部サービス・Browser Run・proxyのbindingを追加しない。`pnpm run deploy` または CI の `pnpm exec wrangler deploy` 前に `node scripts/require-config.mjs` の preflight を通す
 6. 匿名・別ユーザー・偽造JWTの拒否と、所有者の編集を本番で検証してから運用
 
