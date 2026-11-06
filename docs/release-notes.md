@@ -1,3 +1,9 @@
+## 2026-11-06: HTTP依存の追加セキュリティ修正を適用
+
+- Miniflare配下のundici限定overrideを7.30.1から7.30.2へ進めます。Miniflare・Wrangler・workerd・アプリ本体・CI条件は変更しません。
+- 公式の[7.30.2リリース](https://github.com/nodejs/undici/releases/tag/v7.30.2)は別の6勧告を修正します。[Highのredirect/cache問題](https://github.com/nodejs/undici/security/advisories/GHSA-mqg3-3v4r-cm32)にはoriginless Agent・共有cache・特定のinterceptor順が必要で、今回のアプリと確認したMiniflare経路にはその組合せを使っていません。本番の被害や全依存の安全性を実証したという意味ではありません。
+- 前回の過剰なContent-Encoding/途中切断の子プロセス回帰を保持し、ASCII空白を含むSRI metadataの照合をloopback上の固定合成本文で追加検証します。実アプリのSRI利用や認証済み記事を試すものではありません。
+
 ## 未リリース: MCP専用Access設定の案内を整合
 
 - READMEの本番セットアップで、管理画面・管理APIの `ACCESS_AUD` と、本番向け `/api/mcp` 専用の `MCP_ACCESS_AUD` を区別します。専用Accessアプリ・OAuth・接続設定に必要な承認と検証は既存のMCP接続文書を参照してください。
