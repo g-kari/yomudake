@@ -30,7 +30,7 @@
     "esbuild": "0.28.2",
     "happy-dom": "21.0.4",
     "miniflare": "5.20261006.1-alpha",
-    "playwright": "1.62.1",
+    "playwright": "1.65.0",
     "typescript": "5.9.3",
     "wrangler": "4.149.0"
   },
