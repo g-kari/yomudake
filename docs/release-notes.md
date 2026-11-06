@@ -1,3 +1,8 @@
+## 未リリース: MCP専用Access設定の案内を整合
+
+- READMEの本番セットアップで、管理画面・管理APIの `ACCESS_AUD` と、本番向け `/api/mcp` 専用の `MCP_ACCESS_AUD` を区別します。専用Accessアプリ・OAuth・接続設定に必要な承認と検証は既存のMCP接続文書を参照してください。
+- 文書の訂正だけです。認証処理・実環境のAccess設定・認証情報・権限・依存関係・配備は変更しません。
+
 ## 2026-11-06: CIのpnpmセットアップ固定を更新
 
 - CIの pnpm/action-setup v6 を公式commit `73e46992e05b19abd31f2f3c20e0e7370d762115` へ固定。プロジェクトの pnpm 11.25.0、Node 24、frozen install と既存の型・全unit・build・browser検証を保持します。
