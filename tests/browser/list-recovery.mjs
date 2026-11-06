@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {existsSync, mkdirSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {chromium} from 'playwright';
 import {ready, close} from './fixture-server.mjs';
@@ -10,6 +10,7 @@ const origin = 'http://127.0.0.1:4179';
 const output = new URL('../../.sites-runtime/browser/list-recovery/', import.meta.url);
 mkdirSync(output, {recursive: true});
 const playwrightVersion = createRequire(import.meta.url)('playwright/package.json').version;
+const expectedPlaywrightVersion = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).devDependencies.playwright;
 // Optional existing local Chromium provides supplementary evidence only. CI
 // leaves this unset and uses the repository-pinned Playwright browser binary.
 const executableOverride = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || '';
@@ -250,7 +251,7 @@ const timeout = setTimeout(() => {
   process.exit(1);
 }, 90000);
 try {
-  assert.equal(playwrightVersion, '1.62.1', 'Browser QA must use the repository-pinned Playwright version');
+  assert.equal(playwrightVersion, expectedPlaywrightVersion, 'Browser QA must use the repository-pinned Playwright version');
   if (!existsSync(executablePath)) {
     const error = new Error(`Playwright Chromium executable is not installed: ${executablePath}`);
     error.code = 'PLAYWRIGHT_CHROMIUM_MISSING';
