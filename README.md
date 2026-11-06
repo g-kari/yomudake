@@ -61,7 +61,7 @@ Sitesや特定の他アプリのOAuth、APIトークンには依存しません�
 
 Node.js 24以上を使用します。
 
-pnpm 11.25.0を使用します。未導入なら `npm install --global pnpm@11.25.0` で固定版を準備してください。依存関係は `pnpm-lock.yaml` を正として、CIと同じfrozen installを使います。Node.jsの既存要件は変更しません。
+pnpm 11.28.11を使用します。未導入なら `npm install --global pnpm@11.28.11` で固定版を準備してください。依存関係は `pnpm-lock.yaml` を正として、CIと同じfrozen installを使います。Node.jsの既存要件は変更しません。
 
 1. `pnpm install --frozen-lockfile`
 2. `pnpm run check`（管理UIの型チェック、合成データのテスト、本番ビルド）
