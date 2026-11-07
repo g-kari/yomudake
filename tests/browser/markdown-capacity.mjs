@@ -61,6 +61,20 @@ export async function markdownCapacityChecks(browser,out,results){
     }
     results.push({name:`Markdown UTF8 ${encoding} ${bytes} bytes ${width}px no truncation and guarded save`,ok:true});
    }
+   // Capture an actual React handler before editing; normal clicks may use a newer render.
+   for(const [initial,latest] of [['short','a'.repeat(200001)],['a'.repeat(200001),'corrected']]){
+    await body.fill(initial);const before=requests.length;
+    await page.evaluate(latest=>{
+     const save=[...document.querySelectorAll('button')].find(el=>el.textContent==='下書き保存');
+     const key=Object.keys(save).find(k=>k.startsWith('__reactProps$'));
+     if(!key||typeof save[key].onClick!=='function')throw new Error('Missing actual React save handler');
+     const staleClick=save[key].onClick,target=document.querySelector('#markdown-body');
+     Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,latest);
+     target.dispatchEvent(new Event('input',{bubbles:true}));staleClick();
+    },latest);
+    await page.waitForTimeout(80);assert.equal(requests.length,before,'Captured stale save emitted a request');assert.equal(await body.inputValue(),latest);
+   }
+   results.push({name:`actual React stale closure both capacity directions ${width}px no requests`,ok:true});
    await body.fill('修正済み 🦊');assert.equal(await page.locator('.rights-check input').isChecked(),false);
    assert.equal(await page.getByRole('button',{name:'公開する',exact:true}).isDisabled(),true);
    await page.locator('.rights-check input').check();const before=writes;await page.getByRole('button',{name:'公開する',exact:true}).click();
