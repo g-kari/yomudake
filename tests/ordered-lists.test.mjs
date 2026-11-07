@@ -36,14 +36,22 @@ test('separate lists keep independent starts and later markers never reset the f
   assert.equal(doc.querySelectorAll('li[value]').length,0);assert.equal(doc.querySelector('p').textContent,'Paragraph');
  }
 });
-test('ordered markers are bounded to nine digits and larger or signed markers remain inert text',()=>{
+test('only HTML start values are bounded; oversized markers retain block and link recognition',()=>{
  for(const html of outputs('999999999. final supported marker'))assert.deepEqual(starts(dom(html)),[999999999]);
- for(const text of ['1000000000. too large','999999999999999999999999. not a list','-1. negative','+3. signed'])for(const html of outputs(text)){
+ for(const text of ['1000000000. too large','999999999999999999999999. oversized'])for(const html of outputs(text)){
+  const doc=dom(html);assert.deepEqual(starts(doc),[1]);assert.equal(doc.querySelector('ol').getAttribute('start'),null);assert.equal(doc.querySelector('li').textContent,text.replace(/^\d+\.\s+/,''));
+ }
+ for(const text of ['-1. negative','+3. signed'])for(const html of outputs(text)){
   const doc=dom(html);assert.equal(doc.querySelectorAll('ol,ul').length,0);assert.equal(doc.body.textContent,text);
  }
- for(const html of outputs('3. valid\n1000000000. literal tail')){
-  const doc=dom(html);assert.deepEqual(starts(doc),[3]);assert.equal(doc.querySelector('p').textContent,'1000000000. literal tail');
+ for(const html of outputs('3. valid\n1000000000. existing tail')){
+  const doc=dom(html);assert.deepEqual(starts(doc),[3]);assert.deepEqual(items(doc),['valid','existing tail']);assert.equal(doc.querySelectorAll('p').length,0);
  }
+ // Do not reinterpret an old list line as a table header: that would drop its
+ // extra cell and change stored confirmation-link ordinals without a version bump.
+ const text='1000000000. A | B\n--- | ---\nx | y | [hidden](https://example.org/hidden)\n\n[visible](https://example.org/visible)';
+ assert.deepEqual(renderer.markdownExternalLinks(text,origin),['https://example.org/hidden','https://example.org/visible']);
+ for(const html of outputs(text)){const doc=dom(html);assert.equal(doc.querySelectorAll('table').length,0);assert.deepEqual(starts(doc),[1]);assert.deepEqual([...doc.querySelectorAll('a')].map(a=>a.textContent),['hidden','visible']);}
 });
 test('fenced list examples stay code and list text cannot inject attributes or executable markup',()=>{
  const text='```md\n3. literal\n4. example\n```\n\n3. **safe** <img src=x onerror=evil()>\n4. [guarded](https://example.org/list)';

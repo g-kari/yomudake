@@ -8,12 +8,13 @@ function serialize(node:React.ReactNode,origin:string):string {
  if(typeof node==='string'||typeof node==='number')return escape(String(node));
  if(Array.isArray(node))return node.map(n=>serialize(n,origin)).join('');
  if(!React.isValidElement(node)||typeof node.type!=='string'||!tags.has(node.type))return '';
- const props=node.props as {children?:React.ReactNode;href?:string;target?:string;id?:string;tabIndex?:number;className?:string;role?:string;'aria-label'?:string;scope?:string;align?:string};
+ const props=node.props as {children?:React.ReactNode;href?:string;target?:string;id?:string;tabIndex?:number;className?:string;role?:string;'aria-label'?:string;scope?:string;align?:string;start?:number};
  const link=node.type==='a'?articleLink(props.href,origin):null;
  const heading=/^h[1-6]$/.test(node.type)&&typeof props.id==='string'&&/^yomu-section-[1-9]\d*$/.test(props.id);
  const tableRegion=node.type==='div'&&props.className==='table-scroll'&&props.role==='region'&&props.tabIndex===0&&typeof props['aria-label']==='string'&&/^表 [1-9]\d*（左右にスクロールできます）$/.test(props['aria-label']);
  const tableCell=node.type==='th'||node.type==='td';
- const attrs=link?` href="${escape(link.href)}"${props.target==='_blank'?' target="_blank" rel="noopener noreferrer nofollow" referrerpolicy="no-referrer"':''}`:heading?` id="${props.id}" tabindex="-1"`:tableRegion?` class="table-scroll" role="region" tabindex="0" aria-label="${escape(props['aria-label']!)}"`:tableCell?`${node.type==='th'&&props.scope==='col'?' scope="col"':''}${['left','center','right'].includes(props.align||'')?` align="${props.align}"`:''}`:'';
+ const orderedStart=node.type==='ol'&&typeof props.start==='number'&&Number.isInteger(props.start)&&props.start>=0&&props.start<=999_999_999;
+ const attrs=link?` href="${escape(link.href)}"${props.target==='_blank'?' target="_blank" rel="noopener noreferrer nofollow" referrerpolicy="no-referrer"':''}`:heading?` id="${props.id}" tabindex="-1"`:tableRegion?` class="table-scroll" role="region" tabindex="0" aria-label="${escape(props['aria-label']!)}"`:tableCell?`${node.type==='th'&&props.scope==='col'?' scope="col"':''}${['left','center','right'].includes(props.align||'')?` align="${props.align}"`:''}`:orderedStart?` start="${props.start}"`:'';
  if(node.type==='hr')return '<hr>';
  return `<${node.type}${attrs}>${serialize(props.children,origin)}</${node.type}>`;
 }
@@ -40,3 +41,4 @@ export function markdownToHtmlWithOutline(text:string,{origin='',externalHref}:{
 export function markdownToHtml(text:string,options:{origin?:string;externalHref?:(href:string,index:number)=>string}={}){
  return markdownToHtmlWithOutline(text,options).html;
 }
+

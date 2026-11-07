@@ -26,6 +26,9 @@ function tableHeader(line:string,next:string|undefined):{cells:string[];align:Ce
  if(!cells||!delimiter||cells.length!==delimiter.length||delimiter.some(cell=>!/^:?-+:?$/.test(cell)))return null;
  return {cells,align:delimiter.map(cell=>cell.startsWith(':')?cell.endsWith(':')?'center':'left':cell.endsWith(':')?'right':undefined)};
 }
+// Preserve existing block/link recognition; bound only the HTML start value.
+// Later markers never reset a list, and oversized starts keep the old default.
+const orderedItem=/^\s*(\d+)\.\s+/;
 const startsBlock=(line:string)=>/^\s*(#{1,6}\s|```|>|[-+*]\s|\d+\.\s)/.test(line);
 function inline(text:string, options:LinkOptions, depth=0):React.ReactNode[] {
  if(depth>3) return [text];
@@ -66,10 +69,12 @@ export function Markdown({text,...options}:{text:string}&LinkOptions) {
   if(heading) { const tag=`h${heading[1].length}`;nodes.push(React.createElement(tag,{key,id:`yomu-section-${++headingIndex}`,tabIndex:-1},inline(heading[2],options)));i++;continue;}
   if(/^\s*([-*_])\1\1+\s*$/.test(line)) {nodes.push(<hr key={key}/>);i++;continue;}
   if(/^\s*>/.test(line)) {const content:string[]=[];while(i<lines.length && /^\s*>/.test(lines[i]))content.push(lines[i++].replace(/^\s*>\s?/,''));nodes.push(<blockquote key={key}>{inline(content.join('\n'),options)}</blockquote>);continue;}
-  if(/^\s*([-+*]|\d+\.)\s+/.test(line)) {
-   const ordered=/^\s*\d+\./.test(line);const items:React.ReactNode[]=[];
-   while(i<lines.length && (ordered ? /^\s*\d+\.\s+/:/^\s*[-+*]\s+/).test(lines[i])) items.push(<li key={i}>{inline(lines[i++].replace(/^\s*([-+*]|\d+\.)\s+/,''),options)}</li>);
-   nodes.push(ordered?<ol key={key}>{items}</ol>:<ul key={key}>{items}</ul>);continue;
+  const ordered=orderedItem.exec(line);
+  if(ordered||/^\s*[-+*]\s+/.test(line)) {
+   const items:React.ReactNode[]=[];
+   while(i<lines.length && (ordered ? orderedItem:/^\s*[-+*]\s+/).test(lines[i])) items.push(<li key={i}>{inline(lines[i++].replace(/^\s*([-+*]|\d+\.)\s+/,''),options)}</li>);
+   const start=ordered&&ordered[1].length<=9?Number(ordered[1]):1;
+   nodes.push(ordered?<ol key={key} start={start===1?undefined:start}>{items}</ol>:<ul key={key}>{items}</ul>);continue;
   }
   const header=tableHeader(line,lines[i+1]);
   if(header){
@@ -90,3 +95,4 @@ export function Markdown({text,...options}:{text:string}&LinkOptions) {
  }
  return <div className="prose">{nodes}</div>;
 }
+

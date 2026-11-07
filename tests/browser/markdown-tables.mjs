@@ -11,12 +11,14 @@ const output=new URL('../../.sites-runtime/browser/markdown-tables/',import.meta
 mkdirSync(output,{recursive:true});
 const articleId='59438c59-8e88-4a2d-823a-5d01d73c2d11';
 const wideId='59438c59-8e88-4a2d-823a-5d01d73c2d12';
+const orderedId='59438c59-8e88-4a2d-823a-5d01d73c2d13';
+const orderedMarkdown='## 合成の番号付き手順\n\n3. 三番から始める\n4. 四番へ進める\n\n別の手順です。\n\n0. ゼロから始める\n1. 一番へ進める';
 const long='長い合成の説明'.repeat(40);
 const markdown=['## 合成の比較表','| 項目 | 状態 | 数量 | 備考 |','| :--- | :---: | ---: | --- |','| **合成A** | `ready` | 12 | '+long+' |','| 合成B | 待機 | 3 | [架空の参考](https://example.org/table-reference) |','| A\\|B | `x\\|y` | | ![画像は読み込まない](https://example.org/pixel) |','## 表の後','本文はそのままです。'].join('\n\n').replaceAll('\n\n|','\n|');
 const longCode='synthetic_long_code_'.repeat(20),longUrl='https://example.org/'+ 'a'.repeat(300);
 const wideMarkdown='|'+Array.from({length:32},(_,index)=>'項目'+(index+1)).join('|')+'|\n|'+Array(32).fill('---').join('|')+'|\n|'+['`'+longCode+'`','['+longUrl+'](https://example.org/long-label)',...Array(30).fill('合成値')].join('|')+'|';
 const results=[],externalRequests=[],mutations=[],pageErrors=[];
-let browser,status='running',scenario='launch pinned Chromium',downloaded='';
+let browser,status='running',scenario='launch pinned Chromium',downloaded='',orderedDownloaded='';
 const executablePath=chromium.executablePath();
 function report(error){writeFileSync(new URL('results.json',output),JSON.stringify({status,syntheticOnly:true,pinnedChromiumVerified:status==='passed',executablePath,results,externalRequests,mutations,pageErrors,...(error?{failedScenario:scenario,error:error.stack||String(error)}:{})},null,2));}
 async function api(path,options={}){assert.ok(path.startsWith('/')&&!path.startsWith('//'));const response=await fetch(origin+path,{redirect:'error',...options});assert.equal(response.status,200);return response;}
@@ -27,6 +29,7 @@ async function context(width,javaScriptEnabled){
   if(url.origin!==origin){externalRequests.push({method:request.method(),origin:url.origin});return route.abort('blockedbyclient');}
   if(!['GET','HEAD'].includes(request.method())){mutations.push({method:request.method(),path:url.pathname});return route.abort('blockedbyclient');}
   if(url.pathname==='/__synthetic-download/table.html')return route.fulfill({contentType:'text/html; charset=utf-8',body:downloaded});
+  if(url.pathname==='/__synthetic-download/ordered-list.html')return route.fulfill({contentType:'text/html; charset=utf-8',body:orderedDownloaded});
   return route.continue();
  });
  value.on('page',page=>page.on('pageerror',error=>pageErrors.push(error.message)));
@@ -44,6 +47,12 @@ async function tableShape(page){
  assert.ok(await page.locator('th').first().evaluate(element=>element.getBoundingClientRect().width>=100),'Short columns retain readable width');
  assert.equal(await page.locator('tbody tr').first().locator('code').evaluate(element=>element.getClientRects().length),1,'The short ready code remains on one line beside a long prose cell');
 }
+async function orderedShape(page){
+ const lists=page.locator('.prose ol');assert.equal(await lists.count(),2);
+ assert.deepEqual(await lists.evaluateAll(elements=>elements.map(element=>({start:element.start,attribute:element.getAttribute('start'),style:getComputedStyle(element).listStyleType}))),[{start:3,attribute:'3',style:'decimal'},{start:0,attribute:'0',style:'decimal'}]);
+ assert.deepEqual(await lists.locator('li').allTextContents(),['三番から始める','四番へ進める','ゼロから始める','一番へ進める']);
+ assert.equal(await page.locator('.prose img,.prose script,.prose iframe').count(),0);await noOverflow(page);
+}
 async function until(check,message){const deadline=Date.now()+5000;while(!await check()){assert.ok(Date.now()<deadline,message);await delay(25);}}
 async function tabToRegion(page){
  for(let i=0;i<15;i++){await page.keyboard.press('Tab');if(await page.locator('.table-scroll').evaluate(element=>document.activeElement===element))return;}
@@ -58,6 +67,7 @@ try{
  scenario='seed one synthetic table article';
  await api('/api/articles',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify({id:articleId,title:'合成の比較表記事',sourceUrl:'',markdown,published:true,rightsConfirmed:true})});
  await api('/api/articles',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify({id:wideId,title:'合成の32列表',sourceUrl:'',markdown:wideMarkdown,published:true,rightsConfirmed:true})});
+ await api('/api/articles',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify({id:orderedId,title:'合成の番号付き手順',sourceUrl:'',markdown:orderedMarkdown,published:true,rightsConfirmed:true})});
  const savedBefore=await (await api('/api/articles')).json();
  const publicHtml=await (await api('/p/'+articleId)).text();
  for(const width of [320,390,768,1440]){
@@ -111,9 +121,28 @@ try{
   await tableShape(page);await noOverflow(page);await page.screenshot({path:new URL(`preview-${width}.png`,output).pathname,fullPage:true});
   results.push({name:`editor ${width}px: real preview, external warning/focus and full unsaved draft/rights preserved`,ok:true});await ctx.close();
  }
+ const orderedPublicHtml=await (await api('/p/'+orderedId)).text();
+ for(const width of [390,1280]){
+  scenario=`script-free ordered lists at ${width}px`;
+  const publicContext=await context(width,false),publicPage=await publicContext.newPage();await publicPage.goto(origin+'/p/'+orderedId,{waitUntil:'networkidle'});await orderedShape(publicPage);assert.equal(await publicPage.locator('script').count(),0);
+  await publicPage.screenshot({path:new URL(`ordered-public-${width}.png`,output).pathname,fullPage:true});results.push({name:`ordered lists public ${width}px: visible 3/4 and 0/1 numbering, script-free and no overflow`,ok:true});
+  if(width===390){
+   scenario='ordered list HTML download and exact-byte reopening';
+   const pending=publicPage.waitForEvent('download');await publicPage.getByRole('link',{name:'HTMLを保存 ↓',exact:true}).click();const file=await pending;assert.equal(await file.failure(),null);
+   await file.saveAs(new URL('synthetic-ordered-list.html',output).pathname);orderedDownloaded=readFileSync(new URL('synthetic-ordered-list.html',output),'utf8');assert.equal(orderedDownloaded,orderedPublicHtml);
+   const reopened=await publicContext.newPage();await reopened.goto(origin+'/__synthetic-download/ordered-list.html',{waitUntil:'networkidle'});await orderedShape(reopened);assert.equal(await reopened.locator('script').count(),0);results.push({name:'ordered lists exact public HTML download reopens with 3/4 and 0/1 numbering',ok:true});
+  }
+  await publicContext.close();
+  scenario=`actual editor preview with unsaved ordered lists at ${width}px`;
+  const ctx=await context(width,true),page=await ctx.newPage();await page.goto(origin+'/admin',{waitUntil:'networkidle'});await page.getByRole('button',{name:/合成の番号付き手順/}).click();await orderedShape(page);
+  await page.getByRole('button',{name:'Markdown',exact:true}).click();const changed=orderedMarkdown+'\n\n合成の未保存追記。';await page.locator('#markdown-body').fill(changed);await page.locator('.rights-check input').check();await page.getByRole('button',{name:'プレビュー',exact:true}).click();const before=await snapshot(page);await orderedShape(page);
+  await page.getByRole('button',{name:'Markdown',exact:true}).click();assert.equal(await page.locator('#markdown-body').inputValue(),changed);await page.getByRole('button',{name:'プレビュー',exact:true}).click();assert.deepEqual(await snapshot(page),before);await orderedShape(page);
+  await page.screenshot({path:new URL(`ordered-preview-${width}.png`,output).pathname,fullPage:true});results.push({name:`ordered lists editor ${width}px: real preview preserves 3/4 and 0/1 numbering and the unsaved draft/rights`,ok:true});await ctx.close();
+ }
  scenario='stored data and network boundary unchanged';
  assert.deepEqual(await (await api('/api/articles')).json(),savedBefore);assert.deepEqual(externalRequests,[]);assert.deepEqual(mutations,[]);assert.deepEqual(pageErrors,[]);
  results.push({name:'all stored Markdown and timestamps unchanged; no browser writes, external requests or page errors',ok:true});
  status='passed';report();console.log(JSON.stringify({status,results},null,2));
 }catch(error){status='failed';report(error);throw error;}
 finally{clearTimeout(timeout);await browser?.close();await close();}
+
