@@ -1,4 +1,5 @@
 import {chromium} from 'playwright';
+import {markdownCapacityChecks} from './markdown-capacity.mjs';
 import {ready,close} from './fixture-server.mjs';
 import {mkdirSync,writeFileSync,readFileSync} from 'node:fs';
 import assert from 'node:assert/strict';
@@ -412,6 +413,7 @@ async function conversionDeadlineChecks(browser){
 }
 try {
  browser=await chromium.launch({headless:true});
+ await markdownCapacityChecks(browser,out,results);
  await localDraftExportChecks(browser);
  await localExportFeedbackChecks(browser);
  await conversionDeadlineChecks(browser);

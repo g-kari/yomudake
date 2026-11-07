@@ -1,5 +1,6 @@
 'use client';
 import {useEffect,useRef,useState} from 'react';
+import {MAX_MARKDOWN_BYTES} from '../src/security.mjs';
 import {EDITOR_SAVE_PROTOCOL,editorRevision} from '../src/editor-save.mjs';
 import {confirmEditorSaveCapability} from './editor-save';
 const Link=({children,...props}:React.AnchorHTMLAttributes<HTMLAnchorElement>)=><a {...props}>{children}</a>;
@@ -43,6 +44,9 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  const [dirty,setDirty]=useState(false);
  const [exportMessage,setExportMessage]=useState('');
  const currentMarkdown=useRef(sample.markdown);
+ const markdownBytes=new TextEncoder().encode(markdown).length;
+ const markdownOverLimit=markdownBytes>MAX_MARKDOWN_BYTES;
+ const capacitySaveMessage='保存リクエストは送っていません。本文はUTF-8で'+MAX_MARKDOWN_BYTES.toLocaleString()+' bytes以内にしてください。本文を短くするか、端末へ書き出して保管できます。';
  function updateMarkdown(value:string){if(currentMarkdown.current!==value)setExportMessage('');currentMarkdown.current=value;setMarkdown(value);}
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,updateMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
@@ -120,6 +124,10 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  function openArticle(a:Article){if(saving.current||!mayLeave())return;setExportMessage('');savedRevision.current=a;setPendingLink(null);draftChanged();setDirty(false);setId(a.id);setSelectedMeta({id:a.id,created_at:a.created_at});setTitle(a.title);updateMarkdown(a.markdown);setSourceUrl(a.source_url);setRights(false);setPublished(Boolean(a.published));setShareUrl(a.published?`${window.location.origin}/p/${a.id}`:'');setMessage('');setTab('preview');}
  async function save(makePublic:boolean){
   if(busy||saving.current||conversion.current)return;
+  // Read the synchronous ref as well as the rendered payload: an input event
+  // can precede a save click before React commits the next render.
+  if(new TextEncoder().encode(currentMarkdown.current).length>MAX_MARKDOWN_BYTES||markdownBytes>MAX_MARKDOWN_BYTES){setMessage(capacitySaveMessage);return;}
+  if(currentMarkdown.current!==markdown){setMessage('本文の変更を反映しています。内容を確認して、もう一度保存してください。');return;}
   // A queued edit must invalidate confirmation before React rerenders. Also
   // reject handlers whose rendered payload predates an edit or a new check.
   if(makePublic&&(!rights||rightsVersion.current!==draftVersion.current||renderedDraftVersion!==draftVersion.current)){setMessage('本文・出典・ライセンスを確認し、公開確認にチェックしてください。');return;}
@@ -272,12 +280,13 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
     <div className="tab-bar" aria-label="記事の表示">
      <button aria-pressed={tab==='edit'} aria-controls="markdown-panel" onClick={()=>setTab('edit')}>Markdown</button>
      <button aria-pressed={tab==='preview'} aria-controls="preview-panel" onClick={()=>setTab('preview')}>プレビュー</button>
-     <span className="byte-count">{new TextEncoder().encode(markdown).length.toLocaleString()} / 200,000 bytes</span>
+     <span className="byte-count">{markdownBytes.toLocaleString()} / {MAX_MARKDOWN_BYTES.toLocaleString()} bytes</span>
     </div>
+    <p id="markdown-capacity-guidance" className="publication-guidance" role="status" aria-live="polite">{markdownOverLimit?`本文が上限を${(markdownBytes-MAX_MARKDOWN_BYTES).toLocaleString()} bytes超えています。保存・公開する前に短くしてください。本文は切り捨てません。端末への書き出しは使えます。`:`本文はUTF-8で${MAX_MARKDOWN_BYTES.toLocaleString()} bytesまで保存できます。日本語や絵文字は1文字が複数bytesになります。`}</p>
     <div className={`writing-surface ${tab}`}>
      <div id="markdown-panel" className="markdown-pane" hidden={tab!=='edit'}>
       <label htmlFor="markdown-body" className="sr-only">Markdown本文</label>
-      <textarea disabled={busy} name="markdown" id="markdown-body" spellCheck={false} value={markdown} onChange={e=>{draftChanged();updateMarkdown(e.target.value);setDirty(true);}} placeholder={'# 見出し\n\nここにMarkdownを貼り付けてください。'} aria-label="Markdown本文"/>
+      <textarea disabled={busy} name="markdown" id="markdown-body" spellCheck={false} value={markdown} onChange={e=>{draftChanged();updateMarkdown(e.target.value);setDirty(true);}} placeholder={'# 見出し\n\nここにMarkdownを貼り付けてください。'} aria-label="Markdown本文" aria-describedby="markdown-capacity-guidance" aria-invalid={markdownOverLimit||undefined}/>
      </div>
      <div id="preview-panel" className="preview-pane" hidden={tab!=='preview'} aria-label="本文のプレビュー">
       {markdown?<Markdown text={markdown} origin={origin} renderExternal={externalLink}/>:<p className="preview-empty">本文のプレビューがここに表示されます。Markdownを入力するか、URLから変換してください。</p>}
@@ -290,11 +299,12 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
     {exportMessage&&<p className="notice" role="status" aria-live="polite">{exportMessage}</p>}
    </section>
    <section className="publish-bar" aria-label="記事の保存と公開">
+    {message===capacitySaveMessage&&<p className="notice publication-guidance" role="status" aria-live="polite">{message}</p>}
     <label className="rights-check"><input disabled={busy} type="checkbox" checked={rights} onChange={e=>{draftChanged();rightsVersion.current=e.target.checked?draftVersion.current:null;setRights(e.target.checked);}}/><span>出典・ライセンス・個人情報を確認した</span></label>
     <div className="publish-actions"><button className="button" onClick={()=>save(false)} disabled={busy}>{published?'非公開で保存':'下書き保存'}</button><button className="secondary-button" onClick={()=>save(true)} disabled={busy||!rights}>{busy?'保存中…':published?'公開内容を更新':'公開する'}</button></div>
     <p className="publication-guidance">タイトル・本文・元URLを変更したら、公開前にもう一度確認してください。公開した記事だけ、誰でも読めます。非公開に戻しても、他者が保存したコピーは取り消せません。</p>
    </section>
-   {message&&<p className="notice" role="status" aria-live="polite">{message}</p>}
+   {message&&message!==capacitySaveMessage&&<p className="notice" role="status" aria-live="polite">{message}</p>}
    {shareUrl&&<div className="share-box"><label htmlFor="share-url">公開URL</label><input id="share-url" readOnly value={shareUrl}/><button className="secondary-button" onClick={copyUrl}>コピー</button><a href={shareUrl} target="_blank" rel="noopener noreferrer">開く ↗</a></div>}
    <p className="editor-footnote">HTML・スクリプト・フォームは本文として扱います。外部画像は読み込みません。Markdownの入力は公開するまで下書きです。</p>
   </section>

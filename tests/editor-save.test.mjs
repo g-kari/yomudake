@@ -12,10 +12,11 @@ import {createRoot} from 'react-dom/client';
 import Editor from './client/editor';
 window.IS_REACT_ACT_ENVIRONMENT=true;
 const saved={id:'c276dbe0-bdb7-47e0-8e6c-adfa3f8a7d8d',title:'Saved fixture',source_url:'https://source.example.test/saved',markdown:'# Saved body',published:1,created_at:'2026-10-09T00:00:00Z',updated_at:'2026-10-09T00:00:00Z',published_at:'2026-10-09T00:00:00Z'};
+let capabilityReads=0;
 let root,posts=[],lists=[],conversions=[],deferInitial=false,capability=()=>Response.json({protocol:'compare-v1'});
 window.confirm=()=>true;
 window.fetch=(url,options={})=>{
- if(url==='/api/editor/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(capability());
+ if(url==='/api/editor/articles'&&(!options.method||options.method==='GET')){capabilityReads++;return Promise.resolve(capability());}
  if(url==='/api/articles'&&(!options.method||options.method==='GET')){
   if(!deferInitial&&!lists.length){lists.push({initial:true});return Promise.resolve(Response.json({articles:[saved]}));}
   return new Promise((resolve,reject)=>{lists.push({url,options,resolve,reject});});
@@ -48,13 +49,52 @@ async function click(text){
  }
 }
 async function edit(selector,value){await act(async()=>{const target=element(selector);const prototype=target instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value').set.call(target,value);target.dispatchEvent(new Event('input',{bubbles:true}));});}
-async function setup(defer=false){capability=()=>Response.json({protocol:'compare-v1'});posts=[];lists=[];conversions=[];deferInitial=defer;root=createRoot(element('#root'));await act(async()=>{root.render(<Editor signOutPath="/synthetic-signout"/>);});}
+async function setup(defer=false){capability=()=>Response.json({protocol:'compare-v1'});capabilityReads=0;posts=[];lists=[];conversions=[];deferInitial=defer;root=createRoot(element('#root'));await act(async()=>{root.render(<Editor signOutPath="/synthetic-signout"/>);});}
 async function newDraft(){await click('＋ 新しい下書き');await edit('input[name="title"]','My edited title');await edit('#markdown-body','# My edited body');await edit('#source-url','https://source.example.test/new');}
+const capturedClick=text=>{const target=button(text),key=Object.keys(target).find(k=>k.startsWith('__reactProps$'));check(key&&typeof target[key].onClick==='function','Missing actual React click handler');return target[key].onClick;};
 const sent=index=>JSON.parse(posts[index].options.body);
 async function acknowledge(index=0,data,status=200){const input=sent(index);await act(async()=>{posts[index].resolve(Response.json(data===undefined?{protocol:'compare-v1',revision:'a'.repeat(64),id:input.id,published:input.published,url:'/p/'+input.id}:data,{status}));});}
 async function listReply(index,articles=[saved],status=200){await act(async()=>{lists[index].resolve(Response.json(status===200?{articles}:{error:'Synthetic list failure'},{status}));});}
 async function rejectPost(index,message){await act(async()=>{posts[index].reject(new Error(message));});}
 const tests=[
+
+ ...[
+  ['ASCII',n=>'a'.repeat(n)],
+  ['Japanese',n=>'あ'.repeat(Math.floor(n/3))+'a'.repeat(n%3)],
+  ['emoji',n=>'🦊'.repeat(Math.floor(n/4))+'a'.repeat(n%4)]
+ ].flatMap(([encoding,make])=>[199999,200000,200001].map(bytes=>['UTF8 '+encoding+' '+bytes+' bytes preserves body and enforces save capacity',async()=>{
+  await newDraft();const value=make(bytes);check(new TextEncoder().encode(value).length===bytes,'Wrong fixture bytes');await edit('#markdown-body',value);
+  if(bytes>200000){
+   await act(async()=>rights().click());const before=values(),calls=capabilityReads;
+   await click('下書き保存');await click('公開する');
+   check(posts.length===0&&capabilityReads===calls,'Oversized content reached capability or POST');equal(values(),before,'Rejected save changed draft');
+   check(body().getAttribute('aria-invalid')==='true','No invalid state');check(body().getAttribute('aria-describedby').includes('markdown-capacity-guidance'),'Capacity description not associated');
+   check(element('#markdown-capacity-guidance').textContent.includes('1 bytes'),'Wrong overage');check(unloadWarns(),'Rejected save cleared dirty');
+   check(!button('Markdown本文を端末に書き出す').disabled,'Oversized body cannot be exported');
+   await edit('#markdown-body','修正 🦊');check(!rights().checked,'Correction retained confirmation');await click('公開する');check(posts.length===0,'Correction published without recheck');
+   await act(async()=>rights().click());await click('公開する');check(posts.length===1&&sent(0).markdown==='修正 🦊','Corrected body did not publish');await acknowledge();await listReply(1);
+  }else{
+   await click('下書き保存');check(posts.length===1&&sent(0).markdown===value,'Allowed body was rejected or truncated');await acknowledge();await listReply(1);
+  }
+ }])),
+ ['same-tick growth blocks old private-save handler without any request',async()=>{
+  await newDraft();const calls=capabilityReads,staleClick=capturedClick('下書き保存');
+  await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'a'.repeat(200001));target.dispatchEvent(new Event('input',{bubbles:true}));staleClick();staleClick();});
+  check(posts.length===0&&capabilityReads===calls,'Same-tick oversized ref reached network');check(body().value.length===200001&&unloadWarns(),'Same-tick rejection lost draft');
+ }],
+ ['same-tick shrinking never submits the old oversized rendered payload',async()=>{
+  await newDraft();await edit('#markdown-body','a'.repeat(200001));const calls=capabilityReads,staleClick=capturedClick('下書き保存');
+  await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'修正');target.dispatchEvent(new Event('input',{bubbles:true}));staleClick();});
+  check(posts.length===0&&capabilityReads===calls,'Stale oversized payload reached network');
+  await click('下書き保存');check(posts.length===1&&sent(0).markdown==='修正','Settled save failed');await acknowledge();await listReply(1);
+ }],
+ ['same-tick in-range edit does not save a stale Markdown payload',async()=>{
+  await newDraft();const calls=capabilityReads,staleClick=capturedClick('下書き保存');
+  await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'最新本文');target.dispatchEvent(new Event('input',{bubbles:true}));staleClick();});
+  check(posts.length===0&&capabilityReads===calls,'Stale in-range body was sent');
+  await click('下書き保存');check(sent(0).markdown==='最新本文','Retry did not use new body');await acknowledge();await listReply(1);
+ }],
+
  ...[
   ['title','input[name="title"]','Changed after confirmation'],
   ['body','#markdown-body','# Changed after confirmation'],
@@ -189,7 +229,7 @@ test('actual Editor save handlers protect current revisions with synthetic API r
   await window.editorSaveTestDone;
   const report=JSON.parse(window.document.querySelector('#result').textContent);
   assert.ok(!report.fatal,report.fatal);
-  assert.equal(report.results.length,32,'Incomplete save coverage');
+  assert.equal(report.results.length,44,'Incomplete save coverage');
   for(const result of report.results)await t.test(result.name,()=>assert.equal(result.ok,true,result.error));
  }finally{
   await window.happyDOM.close();
