@@ -12,6 +12,7 @@ import {ExternalWarning,type PendingLink} from './external-warning';
 import {downloadMarkdownBody} from './local-markdown';
 type Article={id:string;title:string;source_url:string;markdown:string;published:number;created_at:string;updated_at:string;published_at:string|null};
 type PageTarget={cursor:string|null;history:(string|null)[];query:string};
+type ConversionRequest={controller:AbortController;version:number};
 const LIST_TIMEOUT_MS=15_000;
 const CONVERSION_TIMEOUT_MS=60_000;
 const firstPage=(query=''):PageTarget=>({cursor:null,history:[null],query});
@@ -46,11 +47,12 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,updateMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
  const savedRevision=useRef<Article|string|null>(null);
- const draftVersion=useRef(0),rightsVersion=useRef<number|null>(null),listVersion=useRef(0),conversion=useRef<{controller:AbortController;version:number}|null>(null),saving=useRef<{version:number}|null>(null);
+ const draftVersion=useRef(0),rightsVersion=useRef<number|null>(null),listVersion=useRef(0),conversion=useRef<ConversionRequest|null>(null),saving=useRef<{version:number}|null>(null);
  const messageVersion=useRef(0),copyAttempt=useRef(0);
  // Every newer notice owns its result, including a save finishing while copying.
  function setMessage(value:string){messageVersion.current++;updateMessage(value);}
- const renderedDraftVersion=draftVersion.current;
+ const renderedDraftVersion=draftVersion.current,renderedConversion=conversion.current;
+ const sourceElement=useRef<HTMLInputElement|null>(null),cancelFocus=useRef<{trigger:HTMLButtonElement;version:number}|null>(null);
  const mounted=useRef(false),listRequest=useRef<{version:number;controller:AbortController;target:PageTarget}|null>(null),listElement=useRef<HTMLElement|null>(null);
  const searchInputValue=useRef(''),requestedPage=useRef<PageTarget>(firstPage());
  const failedPage=useRef<PageTarget|null>(null);
@@ -154,6 +156,20 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   }catch(e){if(active())setMessage(e instanceof Error?e.message:'保存できませんでした。本文は残っています。');}
   finally{if(active()){saving.current=null;setBusy(false);}}
  }
+ function cancelConversion(pending:ConversionRequest,trigger:HTMLButtonElement){
+  if(!mounted.current||saving.current||conversion.current!==pending||draftVersion.current!==pending.version)return;
+  if(document.activeElement===trigger)cancelFocus.current={trigger,version:pending.version};
+  // Detach this exact request before aborting so its catch/finally and any
+  // abort-ignoring response cannot change the current draft or a newer request.
+  conversion.current=null;pending.controller.abort();setBusy(false);
+  setMessage('変換の待機を中止しました。入力は残っています。サーバー側の処理や料金の停止を保証するものではありません。');
+ }
+ useEffect(()=>{
+  const restore=cancelFocus.current;cancelFocus.current=null;
+  // Wait until the input is enabled and the action is removed. A newer focus
+  // target, edit, save or conversion takes precedence over this restoration.
+  if(restore&&!busy&&mounted.current&&!saving.current&&!conversion.current&&draftVersion.current===restore.version&&(document.activeElement===restore.trigger||document.activeElement===document.body))sourceElement.current?.focus();
+ },[busy]);
  async function convert(){
   if(busy||saving.current||conversion.current||!sourceUrl)return;
   const version=draftVersion.current;
@@ -208,10 +224,12 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   <section className="conversion-panel" aria-labelledby="conversion-label">
    <label id="conversion-label" htmlFor="source-url" className="sr-only">元URL</label>
    <div className="url-row">
-    <input disabled={busy} id="source-url" name="sourceUrl" spellCheck={false} type="url" placeholder="https://example.com/article" value={sourceUrl} onChange={e=>{draftChanged();setSourceUrl(e.target.value);setDirty(true);}} maxLength={2048} autoComplete="off" aria-describedby="source-guidance"/>
+    <input ref={sourceElement} disabled={busy} id="source-url" name="sourceUrl" spellCheck={false} type="url" placeholder="https://example.com/article" value={sourceUrl} onChange={e=>{draftChanged();setSourceUrl(e.target.value);setDirty(true);}} maxLength={2048} autoComplete="off" aria-describedby="source-guidance"/>
     <button className="button" onClick={convert} disabled={busy||!sourceUrl}>{busy?'処理中…':'URLから変換'}</button>
+    {renderedConversion&&<button type="button" className="secondary-button" onClick={e=>cancelConversion(renderedConversion,e.currentTarget)} aria-describedby="conversion-cancel-guidance">変換の待機を中止</button>}
    </div>
    <p id="source-guidance">一般の公開HTTPSの記事を取得します。ログイン用・非公開・トークン付きURLは入力しないでください。</p>
+   {renderedConversion&&<p id="conversion-cancel-guidance">ブラウザーでの応答待ちだけを中止します。サーバー側の処理や料金の停止は保証しません。</p>}
   </section>
   <aside className="sidebar" aria-label="記事の一覧">
    <div className="sidebar-heading"><h1>記事</h1><button className="new-button" onClick={createNew} disabled={busy}>＋ 新しい下書き</button></div>
