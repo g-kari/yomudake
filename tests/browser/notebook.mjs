@@ -8,6 +8,7 @@ let browser;
 const timeout=setTimeout(()=>{console.error('Synthetic browser QA exceeded 90 seconds.');process.exit(1);},90000);
 const results=[];
 const conversionDeadlineEvidence=[];
+const conversionCancelEvidence=[];
 const deferred=()=>{let resolve;const promise=new Promise(done=>{resolve=done;});return {promise,resolve};};
 
 // Exercise the shipped editor bundle, without owner credentials, real URLs, AI,
@@ -56,6 +57,7 @@ async function localDraftExportChecks(browser){
     await page.waitForFunction(()=>document.querySelector('#markdown-body').disabled);
    }
    const snapshot=()=>page.evaluate(()=>{const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return {title:document.querySelector('input[name="title"]').value,body:document.querySelector('#markdown-body').value,source:document.querySelector('#source-url').value,rights:document.querySelector('.rights-check input').checked,dirty:event.defaultPrevented,status:document.querySelector('.document-status').textContent,share:document.querySelector('#share-url')?.value||''};});
+   assert.equal(await page.getByRole('button',{name:'変換の待機を中止',exact:true}).count(),0,'Conversion cancel must not be offered while idle or saving headers/body');
    const before=await snapshot(),networkCount=requests.length;
    assert.equal(before.dirty,true);assert.equal(await action.isEnabled(),true);
    assert.ok((await page.locator('#local-export-guidance').textContent()).includes('タイトル・元URLは含みません'));
@@ -142,6 +144,87 @@ async function localExportFeedbackChecks(browser){
    await action().scrollIntoViewIfNeeded();await page.screenshot({path:out+`local-export-feedback-${outcome}-${width}.png`,fullPage:false});
    assert.equal(writes,0);assert.equal(conversions,2);assert.deepEqual(errors,[]);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true);
    results.push({name:`local export ${outcome} feedback follows body/article lifetime; canceled leave and rejected conversion retain current feedback at ${width}px`,ok:true});
+  }finally{await context.close();}
+ }
+}
+
+// Ignore abort deliberately at both response stages: cancellation is only a
+// browser wait boundary, not evidence that a remote job or charge was stopped.
+async function conversionCancelChecks(browser){
+ const origin='http://127.0.0.1:4179',cancelLabel='変換の待機を中止';
+ const article={id:'75aa086e-051a-4c7b-b70d-a0bdfcd386a1',title:'中止検証の公開済み記事',source_url:'https://source.example.test/cancel',markdown:'# 中止前の合成本文\n\n本文と公開状態を保持します。',published:1,created_at:'2026-10-09T10:24:00Z',updated_at:'2026-10-10T10:24:00Z',published_at:'2026-10-10T10:24:00Z'};
+ const reply={title:'明示的な新しい変換',markdown:'# 新しい合成の変換結果',sourceUrl:'https://source.example.test/newer'};
+ for(const phase of ['headers','body'])for(const width of [320,1440]){
+  const evidence={phase,width,outcome:width===320?'success':'failure',requests:[],unexpectedRequests:[],pageErrors:[],screenshots:[]};conversionCancelEvidence.push(evidence);
+  const context=await browser.newContext({viewport:{width,height:1000},serviceWorkers:'block',reducedMotion:'reduce'});context.setDefaultTimeout(5000);
+  await context.addInitScript(({phase,origin})=>{
+   const originalFetch=window.fetch.bind(window),originalTimeout=window.setTimeout.bind(window),originalClear=window.clearTimeout.bind(window),timers=new Set();
+   window.setTimeout=(callback,delay,...args)=>{if(delay!==60000)return originalTimeout(callback,delay,...args);const id=originalTimeout(()=>{timers.delete(id);callback(...args);},delay);timers.add(id);return id;};
+   window.clearTimeout=id=>{timers.delete(id);return originalClear(id);};
+   const calls=[];
+   window.__cancelConversionHarness={calls,timerCount:()=>timers.size,finish(index,reply,fail=false){const call=calls[index];if(fail){if(call.controller)call.controller.error(new Error('Obsolete canceled body failure'));else call.reject(new Error('Obsolete canceled headers failure'));}else if(call.controller){call.controller.enqueue(new TextEncoder().encode(JSON.stringify(reply)));call.controller.close();}else call.resolve(new Response(JSON.stringify(reply),{status:200,headers:{'Content-Type':'application/json'}}));call.finished=true;}};
+   window.fetch=(input,options={})=>{
+    const url=new URL(typeof input==='string'?input:input instanceof URL?input.href:input.url,location.href),method=options.method||(input instanceof Request?input.method:'GET');
+    if(url.href!==origin+'/api/convert'||method!=='POST')return originalFetch(input,options);
+    const signal=options.signal||(input instanceof Request?input.signal:null),call={url:url.href,method,body:JSON.parse(options.body),hasSignal:signal instanceof AbortSignal,aborted:0,finished:false};calls.push(call);
+    signal?.addEventListener('abort',()=>{call.aborted++;},{once:true});
+    // Return headers immediately only for body-stall coverage. Both transports
+    // ignore AbortSignal, so the editor must quarantine every late completion.
+    if(phase==='body')return Promise.resolve(new Response(new ReadableStream({start(controller){call.controller=controller;}}),{status:200,headers:{'Content-Type':'application/json'}}));
+    return new Promise((resolve,reject)=>{call.resolve=resolve;call.reject=reject;});
+   };
+  },{phase,origin});
+  const page=await context.newPage();page.on('pageerror',error=>evidence.pageErrors.push(error.message));
+  await context.route('**/*',async route=>{
+   const request=route.request(),url=new URL(request.url()),record={url:url.href,method:request.method()};evidence.requests.push(record);
+   if(url.origin===origin&&request.method()==='GET'&&url.pathname==='/api/articles'&&!url.search)return route.fulfill({contentType:'application/json',body:JSON.stringify({articles:[article]})});
+   if(url.origin===origin&&request.method()==='GET'&&!url.search&&['/admin','/editor.js','/styles.css','/favicon.svg'].includes(url.pathname))return route.continue();
+   evidence.unexpectedRequests.push(record);return route.abort('blockedbyclient');
+  });
+  const action=()=>page.getByRole('button',{name:cancelLabel,exact:true});
+  const notice=()=>page.locator('.editor-main > .notice');
+  const state=()=>page.evaluate(()=>({calls:window.__cancelConversionHarness.calls.map(({url,method,body,hasSignal,aborted,finished})=>({url,method,body,hasSignal,aborted,finished})),timers:window.__cancelConversionHarness.timerCount()}));
+  const snapshot=()=>page.evaluate(()=>{
+   const unload=new Event('beforeunload',{cancelable:true});window.dispatchEvent(unload);
+   return {title:document.querySelector('input[name="title"]').value,body:document.querySelector('#markdown-body').value,source:document.querySelector('#source-url').value,rights:document.querySelector('.rights-check input').checked,published:document.querySelector('.document-status').textContent,share:document.querySelector('#share-url')?.value||'',metadata:document.querySelector('.document-meta').textContent,selected:document.querySelector('.draft-row[aria-current="true"]')?.textContent||'',surface:document.querySelector('.writing-surface').className,markdownHidden:document.querySelector('#markdown-panel').hidden,previewHidden:document.querySelector('#preview-panel').hidden,markdownPressed:document.querySelector('[aria-controls="markdown-panel"]').getAttribute('aria-pressed'),previewPressed:document.querySelector('[aria-controls="preview-panel"]').getAttribute('aria-pressed'),dirty:unload.defaultPrevented};
+  });
+  const start=async()=>{if((await snapshot()).dirty)page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'URLから変換',exact:true}).click();await action().waitFor();};
+  const noOverflow=async()=>assert.equal(await page.evaluate(()=>document.body.scrollWidth<=innerWidth&&document.documentElement.scrollWidth<=innerWidth),true,'Cancel UI overflowed the viewport');
+  try{
+   await page.goto(origin+'/admin');await page.getByRole('button',{name:/中止検証の公開済み記事/}).click();assert.equal(await action().count(),0);
+   if(phase==='headers'){
+    await page.getByRole('button',{name:'Markdown',exact:true}).click();await page.locator('input[name="title"]').fill('中止前の未保存タイトル');await page.locator('#markdown-body').fill('# 中止前の未保存本文');
+   }
+   await page.locator('.rights-check input').check();await page.getByRole('button',{name:width===320?'Markdown':'プレビュー',exact:true}).click();
+   const before=await snapshot();assert.equal(before.dirty,phase==='headers');assert.equal(before.rights,true);assert.equal(before.published,'公開中');assert.equal(before.share,origin+'/p/'+article.id);
+   await start();assert.equal(await page.locator('#source-url').isDisabled(),true);assert.equal((await state()).timers,1);const staleAction=await action().elementHandle();
+   // Reach the action using Tab, then activate it with Enter at both widths.
+   await page.getByRole('link',{name:'よむだけ',exact:true}).focus();
+   for(let count=0;count<8&&!(await action().evaluate(element=>element===document.activeElement));count++)await page.keyboard.press('Tab');
+   assert.equal(await action().evaluate(element=>element===document.activeElement),true,'Keyboard cannot reach cancel');await action().scrollIntoViewIfNeeded();
+   const box=await action().boundingBox();assert.ok(box&&box.x>=0&&box.y>=0&&box.x+box.width<=width+1&&box.y+box.height<=1001,'Cancel focus is outside viewport');await noOverflow();
+   const pendingImage=`conversion-cancel-pending-${phase}-${width}.png`;await page.screenshot({path:out+pendingImage,fullPage:false});evidence.screenshots.push(pendingImage);
+   await page.keyboard.press('Enter');await action().waitFor({state:'detached'});await page.waitForFunction(()=>document.activeElement===document.querySelector('#source-url'));
+   assert.deepEqual(await snapshot(),before,'Cancel must preserve the complete dirty or clean public draft');
+   for(const selector of ['#source-url','input[name="title"]','#markdown-body','.rights-check input'])assert.equal(await page.locator(selector).isEnabled(),true);
+   const canceled=await notice().textContent();assert.ok(canceled.includes('待機を中止')&&!canceled.includes('60秒'));assert.match(canceled,/サーバー|Cloudflare/);assert.ok(canceled.includes('料金')&&canceled.includes('保証'));
+   assert.equal((await state()).timers,0);assert.equal((await state()).calls.length,1);assert.equal((await state()).calls[0].aborted,1);assert.equal((await state()).calls[0].hasSignal,true);
+   assert.equal(await page.getByRole('button',{name:'公開内容を更新',exact:true}).isEnabled(),true,'Cancel invalidated publication confirmation');await noOverflow();
+   const recoveredImage=`conversion-cancel-recovered-${phase}-${width}.png`;await page.screenshot({path:out+recoveredImage,fullPage:false});evidence.screenshots.push(recoveredImage);
+   await page.locator('#source-url').fill(reply.sourceUrl);await page.getByRole('button',{name:'Markdown',exact:true}).click();await page.locator('input[name="title"]').fill('中止後に編集したタイトル');await page.locator('#markdown-body').fill('# 中止後にすぐ入力した本文');await page.locator('.rights-check input').check();
+   const edited=await snapshot();assert.equal(edited.dirty,true);page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'＋ 新しい下書き',exact:true}).click();assert.deepEqual(await snapshot(),edited,'Cancel lost the dirty navigation guard');
+   await start();assert.equal((await state()).calls.length,2);await staleAction.evaluate(element=>{element.click();element.click();});
+   await page.evaluate(({reply,fail})=>window.__cancelConversionHarness.finish(0,{...reply,title:'反映してはいけない古い応答'},fail),{reply,fail:evidence.outcome==='failure'});
+   assert.deepEqual(await snapshot(),edited,'Canceled late headers/body overwrote newer draft');assert.equal(await page.locator('#source-url').isDisabled(),true);assert.equal(await notice().count(),0);assert.equal((await state()).timers,1);assert.equal((await state()).calls[1].aborted,0);
+   await page.evaluate(reply=>window.__cancelConversionHarness.finish(1,reply),reply);await notice().filter({hasText:'Markdownに変換しました'}).waitFor();
+   assert.equal(await page.locator('input[name="title"]').inputValue(),reply.title);assert.equal(await page.locator('#markdown-body').inputValue(),reply.markdown);assert.equal(await action().count(),0);assert.equal((await state()).timers,0);
+   // A programmatic/stale click must not steal focus from another live target.
+   await start();const other=page.getByRole('button',{name:'Markdown',exact:true});await other.focus();const thirdBefore=await snapshot();
+   await action().evaluate(element=>{element.click();element.click();});await action().waitFor({state:'detached'});assert.equal(await other.evaluate(element=>element===document.activeElement),true);assert.deepEqual(await snapshot(),thirdBefore);
+   await page.evaluate(reply=>window.__cancelConversionHarness.finish(2,reply,true),reply);assert.deepEqual(await snapshot(),thirdBefore);assert.ok((await notice().textContent()).includes('待機を中止'));
+   const final=await state();assert.equal(final.calls.length,3,'Only three explicit conversions are permitted');assert.deepEqual(final.calls.map(call=>call.aborted),[1,0,1]);assert.equal(final.timers,0);evidence.conversions=final.calls;
+   assert.deepEqual(evidence.unexpectedRequests,[],'No article writes, external requests or retries');assert.equal(evidence.requests.filter(request=>new URL(request.url).pathname==='/api/articles').length,1);assert.deepEqual(evidence.pageErrors,[]);await noOverflow();
+   results.push({name:`explicit ${phase} cancel at ${width}px preserves complete ${before.dirty?'dirty':'clean'} public draft and rights, restores keyboard focus without stealing, allows typing, ignores stale ${evidence.outcome}, and never saves or retries`,ok:true});
   }finally{await context.close();}
  }
 }
@@ -332,6 +415,7 @@ try {
  await localDraftExportChecks(browser);
  await localExportFeedbackChecks(browser);
  await conversionDeadlineChecks(browser);
+ await conversionCancelChecks(browser);
  const page=await browser.newPage({viewport:{width:1440,height:1100}});
  let blockEmbed=false;const outgoing=[];
  await page.context().route('**/*',async route=>{
@@ -432,8 +516,8 @@ try {
  await keyboard.getByRole('button',{name:'Markdown',exact:true}).focus();await keyboard.keyboard.press('Tab');assert.equal(await keyboard.getByRole('button',{name:'プレビュー',exact:true}).evaluate(el=>el===document.activeElement),true);await keyboard.keyboard.press('Tab');assert.equal(await keyboard.getByRole('button',{name:'Markdown本文を端末に書き出す',exact:true}).evaluate(el=>el===document.activeElement),true);await keyboard.keyboard.press('Tab');assert.equal(await keyboard.locator('.rights-check input').evaluate(el=>el===document.activeElement),true);
  const target=await keyboard.locator('.rights-check').boundingBox();assert.ok(target.height>=44);results.push({name:'keyboard skips hidden source pane and reaches a 44px rights target',ok:true});
  await keyboard.emulateMedia({reducedMotion:'reduce'});assert.equal(await keyboard.locator('button').first().evaluate(el=>getComputedStyle(el).transitionDuration),'0s');results.push({name:'reduced motion respected',ok:true});
- writeFileSync(new URL('../../.sites-runtime/browser/results.json',import.meta.url),JSON.stringify({browser:'pinned Playwright Chromium on isolated CI loopback',syntheticOnly:true,results,conversionDeadlineEvidence},null,2));console.log(JSON.stringify(results,null,2));
+ writeFileSync(new URL('../../.sites-runtime/browser/results.json',import.meta.url),JSON.stringify({browser:'pinned Playwright Chromium on isolated CI loopback',syntheticOnly:true,results,conversionDeadlineEvidence,conversionCancelEvidence},null,2));console.log(JSON.stringify(results,null,2));
 } catch(error) {
- writeFileSync(new URL('../../.sites-runtime/browser/results.json',import.meta.url),JSON.stringify({syntheticOnly:true,results,conversionDeadlineEvidence,error:error.stack||String(error)},null,2));
+ writeFileSync(new URL('../../.sites-runtime/browser/results.json',import.meta.url),JSON.stringify({syntheticOnly:true,results,conversionDeadlineEvidence,conversionCancelEvidence,error:error.stack||String(error)},null,2));
  throw error;
 } finally {clearTimeout(timeout);await browser?.close();await close();}

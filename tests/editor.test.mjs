@@ -10,17 +10,20 @@ const fixture=String.raw`
 import React,{act} from 'react';
 import {createRoot} from 'react-dom/client';
 import Editor from './client/editor';
+import {editorRevision} from './src/editor-save.mjs';
 window.IS_REACT_ACT_ENVIRONMENT=true;
 const saved={id:'c276dbe0-bdb7-47e0-8e6c-adfa3f8a7d8d',title:'Saved fixture',source_url:'https://source.example.test/saved',markdown:'# Saved body',published:1,created_at:'2026-10-09T00:00:00Z',updated_at:'2026-10-09T00:00:00Z',published_at:'2026-10-09T00:00:00Z'};
-let root,requests=[],confirmations=[],accept=true;
+let root,requests=[],posts=[],traffic=[],confirmations=[],accept=true;
 const deadlines=new Map();let nextDeadline=900000,clock=0;
 const nativeTimeout=window.setTimeout.bind(window),nativeClear=window.clearTimeout.bind(window);
 window.setTimeout=(callback,delay,...args)=>{if(delay===60000){const id=nextDeadline++;deadlines.set(id,{due:clock+delay,run:()=>callback(...args)});return id;}return nativeTimeout(callback,delay,...args);};
 window.clearTimeout=id=>{if(deadlines.has(id))deadlines.delete(id);else nativeClear(id);};
 window.confirm=message=>{confirmations.push(message);return accept;};
 window.fetch=(url,options={})=>{
+ traffic.push({url,method:options.method||'GET'});
  if(url==='/api/editor/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({protocol:'compare-v1'}));
  if(url==='/api/articles'&&(!options.method||options.method==='GET'))return Promise.resolve(Response.json({articles:[saved]}));
+ if(url==='/api/editor/articles'&&options.method==='POST')return new Promise((resolve,reject)=>{posts.push({url,options,resolve,reject});});
  if(url==='/api/convert'&&options.method==='POST')return new Promise((resolve,reject)=>{requests.push({url,options,resolve,reject});});
  throw new Error('Unexpected request: '+url);
 };
@@ -35,7 +38,7 @@ const snapshot=()=>({title:title().value,body:body().value,url:url().value,right
 const equal=(actual,expected,label)=>check(JSON.stringify(actual)===JSON.stringify(expected),label+': '+JSON.stringify(actual)+' != '+JSON.stringify(expected));
 async function click(text){await act(async()=>{button(text).click();});}
 async function edit(selector,value){await act(async()=>{const target=element(selector);const prototype=target instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value').set.call(target,value);target.dispatchEvent(new Event('input',{bubbles:true}));});}
-async function setup(){requests=[];confirmations=[];accept=true;root=createRoot(element('#root'));await act(async()=>{root.render(<Editor signOutPath="/synthetic-signout"/>);});}
+async function setup(){requests=[];posts=[];traffic=[];confirmations=[];accept=true;root=createRoot(element('#root'));await act(async()=>{root.render(<Editor signOutPath="/synthetic-signout"/>);});}
 async function newDraft(){await click('＋ 新しい下書き');await edit('input[name="title"]','My edited title');await edit('#markdown-body','# My edited body');await edit('#source-url','https://source.example.test/new');}
 async function finish(index,data,status=200){await act(async()=>{requests[index].resolve(Response.json(data,{status}));});}
 async function fail(index,message){await act(async()=>{requests[index].reject(new Error(message));});}
@@ -43,8 +46,77 @@ async function advance(milliseconds){clock+=milliseconds;await act(async()=>{for
 async function expire(){await advance(60000);}
 function unloadWarns(){const event=new Event('beforeunload',{cancelable:true});window.dispatchEvent(event);return event.defaultPrevented;}
 function recovered(){check(!url().disabled&&!title().disabled&&!body().disabled,'Deadline left editor locked');check(element('.notice').textContent.includes('60秒'),'Deadline guidance missing');check(deadlines.size===0,'Settled deadline leaked');}
+const cancelLabel='変換の待機を中止';
+const cancelAction=()=>[...document.querySelectorAll('button')].find(target=>target.textContent===cancelLabel);
+// A detached DOM click no longer reaches React. Retain the rendered callback
+// explicitly to model a queued handler from the pinned React event layer.
+function queuedClick(target){
+ const propsKey=Object.keys(target).find(key=>key.startsWith('__reactProps$'));
+ const handler=propsKey&&target[propsKey].onClick;check(typeof handler==='function','Missing rendered click handler');
+ return ()=>handler({currentTarget:target,target,preventDefault(){},stopPropagation(){}});
+}
+const fullDraft=()=>({...snapshot(),dirty:unloadWarns(),metadata:element('.document-meta').textContent,selected:document.querySelector('.draft-row[aria-current="true"]')?.textContent||'',markdownHidden:element('#markdown-panel').hidden,previewHidden:element('#preview-panel').hidden,markdownPressed:element('[aria-controls="markdown-panel"]').getAttribute('aria-pressed'),previewPressed:element('[aria-controls="preview-panel"]').getAttribute('aria-pressed')});
+function cancelRecovered(){
+ check(!url().disabled&&!title().disabled&&!body().disabled&&!rights().disabled,'Cancel left editor locked');
+ check(!cancelAction(),'Cancel remained available while idle');check(deadlines.size===0,'Cancel leaked its deadline');
+ const notice=element('.editor-main > .notice').textContent;
+ check(notice.includes('待機を中止')&&!notice.includes('60秒'),'Cancel was reported as a timeout');
+ check(/サーバー|Cloudflare/.test(notice)&&notice.includes('料金')&&notice.includes('保証'),'Cancel must not imply server processing or charges stopped');
+}
+async function stalled(index,phase){
+ if(phase==='headers')return {succeed:data=>finish(index,data),fail:message=>fail(index,message)};
+ let resolveBody,rejectBody;
+ await act(async()=>requests[index].resolve({ok:true,json:()=>new Promise((resolve,reject)=>{resolveBody=resolve;rejectBody=reject;})}));
+ return {succeed:async data=>{await act(async()=>resolveBody(data));},fail:async message=>{await act(async()=>rejectBody(new Error(message)));}};
+}
+async function waitForPost(){
+ const deadline=Date.now()+1000;
+ while(!posts.length){check(Date.now()<deadline,'Save did not reach its synthetic POST');await act(async()=>{await new Promise(resolve=>setImmediate(resolve));});}
+}
 const converted={markdown:'# Converted fixture',title:'Converted fixture',sourceUrl:'https://source.example.test/converted'};
 const tests=[
+ ...['headers','body'].flatMap(phase=>[false,true].map(dirty=>['explicit '+phase+' cancel immediately preserves the complete '+(dirty?'dirty':'clean')+' public draft',async()=>{
+  check(!cancelAction(),'Cancel offered before conversion');await click('Saved fixture公開中 · 2026-10-09');
+  if(dirty){await edit('input[name="title"]','Unsaved public title');await edit('#markdown-body','# Unsaved public body');await edit('#source-url','https://source.example.test/unsaved');await click('Markdown');}
+  await act(async()=>rights().click());const before=fullDraft();check(before.dirty===dirty,'Wrong fixture dirty state');
+  await click('URLから変換');const old=await stalled(0,phase),action=button(cancelLabel);check(!action.disabled,'Cancel is not actionable');
+  const count=traffic.length,prompts=confirmations.length;
+  await act(async()=>{action.click();action.click();});cancelRecovered();equal(fullDraft(),before,'Cancel changed draft/public state/tab/rights');
+  check(requests[0].options.signal.aborted,'Cancel did not abort browser wait');check(traffic.length===count&&requests.length===1&&posts.length===0,'Cancel retried or wrote an article');check(confirmations.length===prompts,'Cancel requested another confirmation');
+  const notice=element('.editor-main > .notice').textContent;await advance(60000);equal(fullDraft(),before,'Canceled timer changed the draft');check(element('.editor-main > .notice').textContent===notice,'Canceled timer replaced notice');
+  await old.succeed({...converted,title:'Ignored canceled result'});equal(fullDraft(),before,'Abort-ignoring completion changed canceled draft');check(element('.editor-main > .notice').textContent===notice,'Late success replaced cancel notice');
+  await click('Markdown');await edit('#markdown-body','# Typed immediately after cancel');check(body().value==='# Typed immediately after cancel'&&unloadWarns(),'Cancel did not restore editable dirty state');check(posts.length===0&&requests.length===1,'Editing triggered an automatic write or retry');
+ }])),
+ ...['headers','body'].flatMap(phase=>['success','failure'].flatMap(outcome=>['pending','settled'].map(newer=>['canceled '+phase+' '+outcome+' cannot affect a '+newer+' newer conversion',async()=>{
+  await newDraft();await click('URLから変換');const old=await stalled(0,phase),staleAction=button(cancelLabel),queuedCancel=queuedClick(staleAction);await click(cancelLabel);
+  await edit('#source-url','https://source.example.test/newer');await act(async()=>rights().click());await click('URLから変換');check(requests.length===2,'New explicit conversion did not start once');
+  if(newer==='settled')await finish(1,{...converted,title:'Newest explicit result'});
+  const before=fullDraft(),notice=document.querySelector('.editor-main > .notice')?.textContent||'',timerCount=deadlines.size;
+  await act(async()=>{staleAction.click();staleAction.click();queuedCancel();queuedCancel();});
+  if(outcome==='success')await old.succeed({...converted,title:'Obsolete canceled success'});else await old.fail('Obsolete canceled failure');
+  equal(fullDraft(),before,'Canceled result changed newer draft');check((document.querySelector('.editor-main > .notice')?.textContent||'')===notice,'Canceled result replaced newer notice');
+  check(url().disabled===(newer==='pending'),'Old completion changed newer busy state');check(deadlines.size===timerCount,'Old completion cleared newer deadline');check(!requests[1].options.signal.aborted,'Stale cancel aborted newer conversion');
+  check(requests.length===2&&posts.length===0,'Cancel or stale completion retried or wrote');
+  if(newer==='pending')await finish(1,{...converted,title:'Newest explicit result'});
+  check(title().value==='Newest explicit result'&&deadlines.size===0&&!cancelAction(),'New conversion did not settle cleanly');
+ }]))),
+ ['focused cancel restores source input, but never steals focus moved to another target',async()=>{
+  await newDraft();await click('URLから変換');await act(async()=>button(cancelLabel).focus());await click(cancelLabel);check(document.activeElement===url(),'Removed keyboard action lost focus instead of restoring source');
+  await click('URLから変換');const other=button('Markdown');await act(async()=>{other.focus();button(cancelLabel).click();});check(document.activeElement===other,'Unfocused cancel stole focus');
+  await click('URLから変換');await act(async()=>{const action=button(cancelLabel);action.focus();action.click();other.focus();});check(document.activeElement===other,'Cancel stole newer focus before rerender');
+  check(deadlines.size===0&&requests.length===3&&posts.length===0,'Focus recovery leaked timers or issued requests');
+ }],
+ ['cancel preserves the saved revision and current rights, never exposes a save cancel, and never replays a POST',async()=>{
+  await click('Saved fixture公開中 · 2026-10-09');await edit('#markdown-body','# Confirmed unsaved public edit');await act(async()=>rights().click());const before=fullDraft();
+  await click('URLから変換');const staleAction=button(cancelLabel),queuedCancel=queuedClick(staleAction);await click(cancelLabel);equal(fullDraft(),before,'Cancel altered the publication draft');check(posts.length===0,'Cancel saved without request');
+  await click('公開内容を更新');await waitForPost();const sent=JSON.parse(posts[0].options.body);
+  equal(sent,{protocol:'compare-v1',expectedRevision:await editorRevision(saved),id:saved.id,title:before.title,markdown:before.body,sourceUrl:before.url,published:true,rightsConfirmed:true},'Cancel invalidated rights or saved baseline');
+  check(!cancelAction(),'Cancel offered during save');check(posts[0].options.signal===undefined,'Save was given a conversion cancellation signal');
+  await act(async()=>{staleAction.click();staleAction.click();queuedCancel();queuedCancel();});await finish(0,converted);check(url().disabled,'Old conversion or stale cancel unlocked a pending save');
+  check(posts.length===1&&requests.length===1&&deadlines.size===0,'Pending save was replayed or converted');
+  await act(async()=>posts[0].resolve(Response.json({protocol:'compare-v1',revision:'a'.repeat(64),id:saved.id,published:true,url:'/p/'+saved.id})));
+  check(!url().disabled&&!unloadWarns()&&!cancelAction(),'Explicit save did not settle cleanly');check(posts.length===1,'Save completion replayed the POST');
+ }],
  ['stalled headers time out without changing the complete public draft or retrying',async()=>{
   await click('Saved fixture公開中 · 2026-10-09');await edit('#markdown-body','# Unsaved private fixture');await act(async()=>rights().click());const before=snapshot();await click('URLから変換');check(url().disabled,'Conversion did not lock');await advance(59999);check(url().disabled,'Conversion timed out before 60 seconds');await advance(1);recovered();equal(snapshot(),before,'Timeout changed the public draft');check(unloadWarns(),'Timeout cleared dirty warning');check(requests[0].options.signal.aborted,'Deadline did not abort transport');check(requests.length===1,'Deadline automatically retried');await edit('#markdown-body','# Editable after timeout');check(body().value==='# Editable after timeout','Editing did not recover');
  }],
@@ -151,7 +223,7 @@ test('actual owner Editor interaction handlers protect drafts with synthetic API
   await window.editorTestDone;
   const report=JSON.parse(window.document.querySelector('#result').textContent);
   assert.ok(!report.fatal,report.fatal);
-  assert.equal(report.results.length,25,'Incomplete editor coverage');
+  assert.equal(report.results.length,39,'Incomplete editor coverage');
   for(const result of report.results)await t.test(result.name,()=>assert.equal(result.ok,true,result.error));
  }finally{
   await window.happyDOM.close();
