@@ -46,6 +46,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
  const currentMarkdown=useRef(sample.markdown);
  const markdownBytes=new TextEncoder().encode(markdown).length;
  const markdownOverLimit=markdownBytes>MAX_MARKDOWN_BYTES;
+ const capacitySaveMessage='保存リクエストは送っていません。本文はUTF-8で'+MAX_MARKDOWN_BYTES.toLocaleString()+' bytes以内にしてください。本文を短くするか、端末へ書き出して保管できます。';
  function updateMarkdown(value:string){if(currentMarkdown.current!==value)setExportMessage('');currentMarkdown.current=value;setMarkdown(value);}
  const [pendingLink,setPendingLink]=useState<PendingLink|null>(null);
  const [tab,setTab]=useState<'edit'|'preview'>('preview'),[busy,setBusy]=useState(false),[message,updateMessage]=useState(''),[rights,setRights]=useState(false),[published,setPublished]=useState(false),[shareUrl,setShareUrl]=useState('');
@@ -125,7 +126,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   if(busy||saving.current||conversion.current)return;
   // Read the synchronous ref as well as the rendered payload: an input event
   // can precede a save click before React commits the next render.
-  if(new TextEncoder().encode(currentMarkdown.current).length>MAX_MARKDOWN_BYTES||markdownBytes>MAX_MARKDOWN_BYTES){setMessage('保存リクエストは送っていません。本文はUTF-8で'+MAX_MARKDOWN_BYTES.toLocaleString()+' bytes以内にしてください。本文を短くするか、端末へ書き出して保管できます。');return;}
+  if(new TextEncoder().encode(currentMarkdown.current).length>MAX_MARKDOWN_BYTES||markdownBytes>MAX_MARKDOWN_BYTES){setMessage(capacitySaveMessage);return;}
   if(currentMarkdown.current!==markdown){setMessage('本文の変更を反映しています。内容を確認して、もう一度保存してください。');return;}
   // A queued edit must invalidate confirmation before React rerenders. Also
   // reject handlers whose rendered payload predates an edit or a new check.
@@ -298,11 +299,12 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
     {exportMessage&&<p className="notice" role="status" aria-live="polite">{exportMessage}</p>}
    </section>
    <section className="publish-bar" aria-label="記事の保存と公開">
+    {message===capacitySaveMessage&&<p className="notice publication-guidance" role="status" aria-live="polite">{message}</p>}
     <label className="rights-check"><input disabled={busy} type="checkbox" checked={rights} onChange={e=>{draftChanged();rightsVersion.current=e.target.checked?draftVersion.current:null;setRights(e.target.checked);}}/><span>出典・ライセンス・個人情報を確認した</span></label>
     <div className="publish-actions"><button className="button" onClick={()=>save(false)} disabled={busy}>{published?'非公開で保存':'下書き保存'}</button><button className="secondary-button" onClick={()=>save(true)} disabled={busy||!rights}>{busy?'保存中…':published?'公開内容を更新':'公開する'}</button></div>
     <p className="publication-guidance">タイトル・本文・元URLを変更したら、公開前にもう一度確認してください。公開した記事だけ、誰でも読めます。非公開に戻しても、他者が保存したコピーは取り消せません。</p>
    </section>
-   {message&&<p className="notice" role="status" aria-live="polite">{message}</p>}
+   {message&&message!==capacitySaveMessage&&<p className="notice" role="status" aria-live="polite">{message}</p>}
    {shareUrl&&<div className="share-box"><label htmlFor="share-url">公開URL</label><input id="share-url" readOnly value={shareUrl}/><button className="secondary-button" onClick={copyUrl}>コピー</button><a href={shareUrl} target="_blank" rel="noopener noreferrer">開く ↗</a></div>}
    <p className="editor-footnote">HTML・スクリプト・フォームは本文として扱います。外部画像は読み込みません。Markdownの入力は公開するまで下書きです。</p>
   </section>
