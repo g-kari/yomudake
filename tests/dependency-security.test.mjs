@@ -10,10 +10,58 @@ const wrangler = createRequire(require.resolve('wrangler/package.json'));
 const viaWrangler = createRequire(wrangler.resolve('miniflare'));
 const childFixture = fileURLToPath(new URL('./fixtures/undici-response-child.cjs', import.meta.url));
 
-test('direct and Wrangler Miniflare resolve the patched undici without changing workerd', () => {
-  for (const parent of [direct, viaWrangler]) {
+test('direct and Wrangler Miniflare resolve patched undici with their intended workerd versions', () => {
+  assert.equal(require('miniflare/package.json').version, '5.20261006.1-alpha');
+  assert.equal(wrangler('miniflare/package.json').version, '5.20261104.0-beta');
+  assert.equal(wrangler('wrangler/package.json').version, '4.158.0');
+  for (const [parent, workerdVersion] of [
+    [direct, '1.20261006.1'],
+    [viaWrangler, '1.20261104.1'],
+  ]) {
     assert.equal(parent('undici/package.json').version, '7.30.2');
-    assert.equal(parent('workerd/package.json').version, '1.20261006.1');
+    assert.equal(parent('workerd/package.json').version, workerdVersion);
+  }
+});
+
+test('Wrangler Miniflare starts its pinned native workerd without external services', {timeout: 10000}, async () => {
+  const {Miniflare} = wrangler('miniflare');
+  let externalCalls = 0;
+  const runtime = new Miniflare({
+    cf: false,
+    enableDevRegistry: false,
+    workers: [{
+      config: {
+        name: 'synthetic-wrangler-runtime',
+        compatibilityDate: '2026-10-09',
+        compatibilityFlags: ['nodejs_compat', 'global_fetch_strictly_public'],
+        manifest: {
+          mainModule: 'fixture.mjs',
+          modules: {
+            'fixture.mjs': {
+              type: 'esm',
+              contents: "export default {fetch() {return new Response('synthetic-wrangler-runtime');}};",
+            },
+          },
+        },
+      },
+      dev: {
+        outboundService: {
+          type: 'fetcher',
+          handler: async () => {
+            externalCalls++;
+            throw new Error('No external network permitted');
+          },
+        },
+      },
+    }],
+  });
+  try {
+    const response = await runtime.dispatchFetch('https://fixture.invalid/');
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), 'synthetic-wrangler-runtime');
+    assert.equal(externalCalls, 0);
+  } finally {
+    await runtime.dispose();
   }
 });
 
