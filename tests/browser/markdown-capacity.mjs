@@ -38,6 +38,15 @@ export async function markdownCapacityChecks(browser,out,results){
      assert.equal(await page.locator('.rights-check input').isChecked(),true,'Rejected save changed confirmation');
      assert.equal(await page.evaluate(()=>{const e=new Event('beforeunload',{cancelable:true});dispatchEvent(e);return e.defaultPrevented;}),true);
      if(encoding==='emoji'){
+      await page.locator('.rights-check input').focus();await page.keyboard.press('Tab');
+      assert.equal(await save.evaluate(el=>el===document.activeElement),true,'Tab reaches private save');
+      await page.keyboard.press('Enter');assert.equal(requests.length,before,'Keyboard oversized save fetched');
+      const notice=page.locator('p.notice').filter({hasText:'保存リクエストは送っていません。'});
+      await notice.waitFor();const box=await save.boundingBox(),noticeBox=await notice.boundingBox();
+      assert.ok(box&&box.x>=0&&box.y>=0&&box.x+box.width<=width+1&&box.y+box.height<=1001,'Focused save remains visible');
+      assert.ok(noticeBox&&noticeBox.x>=0&&noticeBox.y>=0&&noticeBox.x+noticeBox.width<=width+1&&noticeBox.y+noticeBox.height<=1001,'No-write guidance visible beside focused action');
+      assert.equal(await save.evaluate(el=>getComputedStyle(el).outlineStyle!=='none'&&parseFloat(getComputedStyle(el).outlineWidth)>0),true,'Keyboard focus outline');
+      await page.screenshot({path:out+`markdown-capacity-save-focus-${width}.png`,fullPage:false});
       const exportButton=page.getByRole('button',{name:'Markdown本文を端末に書き出す',exact:true});await exportButton.focus();
       const next=page.waitForEvent('download');await page.keyboard.press('Enter');const download=await next;
       assert.deepEqual(readFileSync(await download.path()),Buffer.from(value));assert.equal(requests.length,before);

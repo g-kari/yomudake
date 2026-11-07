@@ -51,6 +51,191 @@ async function click(text){
 async function edit(selector,value){await act(async()=>{const target=element(selector);const prototype=target instanceof HTMLTextAreaElement?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(prototype,'value').set.call(target,value);target.dispatchEvent(new Event('input',{bubbles:true}));});}
 async function setup(defer=false){capability=()=>Response.json({protocol:'compare-v1'});capabilityReads=0;posts=[];lists=[];conversions=[];deferInitial=defer;root=createRoot(element('#root'));await act(async()=>{root.render(<Editor signOutPath="/synthetic-signout"/>);});}
 async function newDraft(){await click('＋ 新しい下書き');await edit('input[name="title"]','My edited title');await edit('#markdown-body','# My edited body');await edit('#source-url','https://source.example.test/new');}
+const capturedClick=text=>{const target=button(text),key=Object.keys(target).find(k=>k.startsWith('__reactProps(posts[index].options.body);
+async function acknowledge(index=0,data,status=200){const input=sent(index);await act(async()=>{posts[index].resolve(Response.json(data===undefined?{protocol:'compare-v1',revision:'a'.repeat(64),id:input.id,published:input.published,url:'/p/'+input.id}:data,{status}));});}
+async function listReply(index,articles=[saved],status=200){await act(async()=>{lists[index].resolve(Response.json(status===200?{articles}:{error:'Synthetic list failure'},{status}));});}
+async function rejectPost(index,message){await act(async()=>{posts[index].reject(new Error(message));});}
+const tests=[
+
+ ...[
+  ['ASCII',n=>'a'.repeat(n)],
+  ['Japanese',n=>'あ'.repeat(Math.floor(n/3))+'a'.repeat(n%3)],
+  ['emoji',n=>'🦊'.repeat(Math.floor(n/4))+'a'.repeat(n%4)]
+ ].flatMap(([encoding,make])=>[199999,200000,200001].map(bytes=>['UTF8 '+encoding+' '+bytes+' bytes preserves body and enforces save capacity',async()=>{
+  await newDraft();const value=make(bytes);check(new TextEncoder().encode(value).length===bytes,'Wrong fixture bytes');await edit('#markdown-body',value);
+  if(bytes>200000){
+   await act(async()=>rights().click());const before=values(),calls=capabilityReads;
+   await click('下書き保存');await click('公開する');
+   check(posts.length===0&&capabilityReads===calls,'Oversized content reached capability or POST');equal(values(),before,'Rejected save changed draft');
+   check(body().getAttribute('aria-invalid')==='true','No invalid state');check(body().getAttribute('aria-describedby').includes('markdown-capacity-guidance'),'Capacity description not associated');
+   check(element('#markdown-capacity-guidance').textContent.includes('1 bytes'),'Wrong overage');check(unloadWarns(),'Rejected save cleared dirty');
+   check(!button('Markdown本文を端末に書き出す').disabled,'Oversized body cannot be exported');
+   await edit('#markdown-body','修正 🦊');check(!rights().checked,'Correction retained confirmation');await click('公開する');check(posts.length===0,'Correction published without recheck');
+   await act(async()=>rights().click());await click('公開する');check(posts.length===1&&sent(0).markdown==='修正 🦊','Corrected body did not publish');await acknowledge();await listReply(1);
+  }else{
+   await click('下書き保存');check(posts.length===1&&sent(0).markdown===value,'Allowed body was rejected or truncated');await acknowledge();await listReply(1);
+  }
+ }])),
+ ['same-tick growth blocks old private-save handler without any request',async()=>{
+  await newDraft();const calls=capabilityReads,staleClick=capturedClick('下書き保存');
+  await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'a'.repeat(200001));target.dispatchEvent(new Event('input',{bubbles:true}));staleClick();staleClick();});
+  check(posts.length===0&&capabilityReads===calls,'Same-tick oversized ref reached network');check(body().value.length===200001&&unloadWarns(),'Same-tick rejection lost draft');
+ }],
+ ['same-tick shrinking never submits the old oversized rendered payload',async()=>{
+  await newDraft();await edit('#markdown-body','a'.repeat(200001));const calls=capabilityReads,staleClick=capturedClick('下書き保存');
+  await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'修正');target.dispatchEvent(new Event('input',{bubbles:true}));staleClick();});
+  check(posts.length===0&&capabilityReads===calls,'Stale oversized payload reached network');
+  await click('下書き保存');check(posts.length===1&&sent(0).markdown==='修正','Settled save failed');await acknowledge();await listReply(1);
+ }],
+ ['same-tick in-range edit does not save a stale Markdown payload',async()=>{
+  await newDraft();const calls=capabilityReads;
+  await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'最新本文');target.dispatchEvent(new Event('input',{bubbles:true}));staleClick();});
+  check(posts.length===0&&capabilityReads===calls,'Stale in-range body was sent');
+  await click('下書き保存');check(sent(0).markdown==='最新本文','Retry did not use new body');await acknowledge();await listReply(1);
+ }],
+
+ ...[
+  ['title','input[name="title"]','Changed after confirmation'],
+  ['body','#markdown-body','# Changed after confirmation'],
+  ['source','#source-url','https://source.example.test/changed']
+ ].map(([field,selector,value])=>['a changed '+field+' requires current-content confirmation before publication',async()=>{
+  await newDraft();await act(async()=>rights().click());await edit(selector,value);
+  check(!rights().checked,'Changed '+field+' retained the old publication confirmation');check(button('公開する').disabled,'Changed '+field+' left Publish enabled');check(unloadWarns(),'Changed '+field+' lost unsaved warning');
+  await click('公開する');check(posts.length===0,'Changed '+field+' was published without rechecking');
+  await act(async()=>rights().click());await click('公開する');check(posts.length===1&&sent(0).published,'Reconfirmed '+field+' could not publish');check(sent(0).title===title().value&&sent(0).markdown===body().value&&sent(0).sourceUrl===url().value,'Reconfirmed publication used obsolete content');await acknowledge();await listReply(1);
+ }]),
+ ['focus, tabs, and unchanged values retain a valid publication confirmation',async()=>{
+  await newDraft();await act(async()=>rights().click());const before=values();await act(async()=>{title().focus();body().focus();url().focus();});await click('プレビュー');await click('Markdown');
+  for(const [selector,value] of [['input[name="title"]',before.title],['#markdown-body',before.body],['#source-url',before.url]])await edit(selector,value);
+  check(rights().checked&&!button('公開する').disabled,'Non-content navigation invalidated confirmation');await click('公開する');check(posts.length===1,'Valid confirmation did not publish');await acknowledge();await listReply(1);
+ }],
+ ['changed content can still be saved privately without another publication confirmation',async()=>{
+  await newDraft();await act(async()=>rights().click());await edit('#markdown-body','# Privately edited after confirmation');check(!rights().checked,'Changed private draft retained confirmation');await click('下書き保存');check(posts.length===1&&!sent(0).published&&!sent(0).rightsConfirmed,'Private save required or reused public confirmation');check(sent(0).markdown===body().value,'Private save lost the latest content');await acknowledge();await listReply(1);check(!unloadWarns(),'Confirmed private save stayed dirty');
+ }],
+ ['editing an already-public article leaves its live status but requires a fresh update confirmation',async()=>{
+  await click('Saved fixture公開中 · 2026-10-09');await act(async()=>rights().click());await edit('#markdown-body','# Changed public fixture');
+  check(!rights().checked&&button('公開内容を更新').disabled,'Public update retained old confirmation');check(element('.document-status').textContent==='公開中','Unsaved edit hid existing publication');check(element('#share-url').value.endsWith('/p/'+saved.id),'Unsaved edit removed existing public URL');await click('公開内容を更新');check(posts.length===0,'Changed public article was updated without rechecking');await act(async()=>rights().click());await click('公開内容を更新');check(posts.length===1&&sent(0).id===saved.id&&sent(0).published,'Reconfirmed public update lost its ID');await acknowledge();await listReply(1);
+ }],
+ ['an input edit followed by Publish in the same tick cannot use a stale confirmation',async()=>{
+  await newDraft();await act(async()=>rights().click());await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'# Same-tick unconfirmed content');target.dispatchEvent(new Event('input',{bubbles:true}));button('公開する').click();});
+  check(posts.length===0,'Same-tick edit published with stale confirmation');check(!rights().checked&&unloadWarns(),'Same-tick edit did not remain an unconfirmed draft');
+ }],
+ ['same-tick edit and recheck cannot publish an obsolete rendered payload',async()=>{
+  await newDraft();await act(async()=>rights().click());await act(async()=>{const target=title();Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(target,'# Same-tick latest title');target.dispatchEvent(new Event('input',{bubbles:true}));rights().click();rights().click();button('公開する').click();});
+  check(posts.length===0,'Same-tick recheck published an obsolete rendered payload');check(unloadWarns(),'Same-tick recheck cleared unsaved state');if(!rights().checked)await act(async()=>rights().click());await click('公開する');check(posts.length===1&&sent(0).title==='# Same-tick latest title','Settled recheck did not publish the latest title');await acknowledge();await listReply(1);
+ }],
+ ['rapid repeated saves dispatch one request and retain the same article ID',async()=>{
+  await newDraft();await act(async()=>{const target=button('下書き保存');target.click();target.click();});check(posts.length===1,'Duplicate save request: '+posts.length);check(sent(0).markdown==='# My edited body','Wrong body snapshot');await acknowledge();await listReply(1);check(!url().disabled,'Save left editor locked');check(!unloadWarns(),'Confirmed save stayed dirty');
+ }],
+ ['rapid draft/publish clicks cannot race contradictory publication writes',async()=>{
+  await newDraft();await act(async()=>{rights().click();});await act(async()=>{button('下書き保存').click();button('公開する').click();});check(posts.length===1,'Conflicting save and publish requests: '+posts.length);check(!sent(0).published,'First save was replaced by publish');await acknowledge();await listReply(1);
+ }],
+ ['a late save acknowledgement preserves a newer body and its unload warning',async()=>{
+  await newDraft();await click('下書き保存');await edit('#markdown-body','# Newer queued body');const before=values();await acknowledge();await listReply(1);equal(values(),before,'Save changed newer draft');check(unloadWarns(),'Late save cleared newer dirty state');check(element('.notice').textContent.includes('まだ保存されていません'),'Missing newer-change notice');check(!url().disabled,'Settled save stayed locked');
+ }],
+ ['newer title and source changes remain unsaved after publication acknowledgement',async()=>{
+  await newDraft();await act(async()=>{rights().click();});await click('公開する');await edit('input[name="title"]','Newer queued title');await edit('#source-url','https://source.example.test/newer');const before=values();await acknowledge();await listReply(1);equal(values(),before,'Publish changed newer fields');check(unloadWarns(),'Publish cleared newer dirty state');check(element('.document-status').textContent==='公開中','Acknowledged publication was hidden');check(element('#share-url').value.endsWith('/p/'+sent(0).id),'Wrong acknowledged share URL');
+ }],
+ ['an edit queued during article-list refresh stays dirty when refresh finishes',async()=>{
+  await newDraft();await click('下書き保存');await acknowledge();check(lists.length===2,'Save did not refresh list');await edit('#markdown-body','# Edit during refresh');await listReply(1);check(body().value==='# Edit during refresh','Refresh changed body');check(unloadWarns(),'Refresh cleared newer edit');check(!url().disabled,'Refresh left lock active');
+ }],
+ ['HTTP rejection preserves edits and a retry uses the original article ID',async()=>{
+  await newDraft();const before=values();await click('下書き保存');await acknowledge(0,{error:'Synthetic save rejection'},400);equal(values(),before,'Rejected save changed inputs');check(unloadWarns(),'Rejected save cleared dirty state');check(element('.notice').textContent==='Synthetic save rejection','Missing rejection');check(!url().disabled,'Rejected save stayed locked');await click('下書き保存');check(sent(1).id===sent(0).id,'Retry generated a duplicate article ID');await acknowledge(1);await listReply(1);
+ }],
+ ['network failure preserves newer unsaved changes and allows retry',async()=>{
+  await newDraft();await click('下書き保存');await edit('#markdown-body','# Newer after network request');const before=values();await rejectPost(0,'Synthetic network failure');equal(values(),before,'Network failure changed newer draft');check(unloadWarns(),'Network failure hid newer unsaved state');check(!url().disabled,'Network failure left lock active');await click('下書き保存');check(sent(1).markdown==='# Newer after network request','Retry used obsolete body');await acknowledge(1);await listReply(1);
+ }],
+ ['malformed success cannot falsely mark a draft as saved',async()=>{
+  await newDraft();const before=values();await click('下書き保存');await acknowledge(0,null);equal(values(),before,'Malformed response changed inputs');check(unloadWarns(),'Malformed response cleared unsaved state');check(element('.notice').textContent.includes('本文は残っています'),'Malformed response not explained');check(lists.length===1,'Malformed acknowledgement refreshed list');check(!url().disabled,'Malformed response left lock active');
+ }],
+ ['mismatched article and publication acknowledgements are rejected',async()=>{
+  await newDraft();await click('下書き保存');await acknowledge(0,{id:saved.id,published:false,url:'/p/'+saved.id});check(unloadWarns(),'Wrong article acknowledgement cleared dirty state');check(lists.length===1,'Wrong article acknowledgement accepted');await click('下書き保存');await acknowledge(1,{id:sent(1).id,published:true,url:'/p/'+sent(1).id});check(unloadWarns(),'Wrong publication acknowledgement cleared dirty state');check(lists.length===1,'Wrong publication acknowledgement accepted');
+ }],
+ ['successful save remains acknowledged if the later list refresh fails',async()=>{
+  await newDraft();await act(async()=>{rights().click();});await click('公開する');await acknowledge();await listReply(1,[],503);check(!unloadWarns(),'Confirmed publication became dirty');check(element('.document-status').textContent==='公開中','Confirmed publication was hidden');check(element('#share-url').value.endsWith('/p/'+sent(0).id),'Confirmed URL was lost');check(element('.notice').textContent.includes('公開しました。')&&element('.notice').textContent.includes('一覧'),'Refresh failure disguised confirmed save');check(!url().disabled,'Refresh failure left editor locked');
+ }],
+ ['initial list response arriving after the save refresh cannot replace newer records',async()=>{
+  await newDraft();await click('下書き保存');await acknowledge();const input=sent(0);await listReply(1,[{...saved,id:input.id,title:'Fresh saved title',published:0}]);await listReply(0,[{...saved,title:'Stale initial title'}]);check(element('.draft-list').textContent.includes('Fresh saved title'),'Late initial list replaced saved records');check(!element('.draft-list').textContent.includes('Stale initial title'),'Stale initial list was rendered');
+ },true],
+ ['a failed save still allows the delayed initial article list to populate',async()=>{
+  await newDraft();await click('下書き保存');await acknowledge(0,{error:'Synthetic save rejection'},400);await listReply(0,[saved]);check(element('.draft-list').textContent.includes('Saved fixture'),'Failed save discarded initial article list');check(unloadWarns(),'Initial list cleared rejected draft');check(element('.notice').textContent==='Synthetic save rejection','Initial list hid save rejection');
+ },true],
+ ['same-tick New/Open clicks cannot replace the document being saved',async()=>{
+  await newDraft();const before=values();await act(async()=>{button('下書き保存').click();button('＋ 新しい下書き').click();button('Saved fixture公開中 · 2026-10-09').click();});equal(values(),before,'Navigation raced in-flight save');await acknowledge();await listReply(1);equal(values(),before,'Acknowledgement applied to another document');
+ }],
+ ['same-tick conversion and saving cannot start competing requests',async()=>{
+  await newDraft();await act(async()=>{button('下書き保存').click();button('URLから変換').click();});check(posts.length===1&&conversions.length===0,'Save and conversion raced');await acknowledge();await listReply(1);
+ }],
+ ['conversion-first same-tick Save and Publish clicks cannot race the replacement',async()=>{
+  await newDraft();await act(async()=>{rights().click();});await act(async()=>{button('URLから変換').click();button('下書き保存').click();button('公開する').click();});check(conversions.length===1&&posts.length===0,'Conversion-first save/publish race: '+conversions.length+' conversions, '+posts.length+' saves');check(url().disabled,'Conversion did not lock the editor');
+  const converted={title:'Converted fixture',markdown:'# Converted fixture',sourceUrl:'https://source.example.test/converted'};await act(async()=>{conversions[0].resolve(Response.json(converted));});equal(values(),{title:converted.title,body:converted.markdown,url:converted.sourceUrl,rights:false},'Conversion-first result was changed');check(unloadWarns(),'Converted draft was falsely marked saved');check(!url().disabled,'Completed conversion left editor locked');await click('下書き保存');check(posts.length===1&&sent(0).markdown===converted.markdown&&sent(0).title===converted.title&&sent(0).sourceUrl===converted.sourceUrl,'Post-conversion save used obsolete fields');await acknowledge();await listReply(1);check(!unloadWarns(),'Post-conversion save stayed dirty');
+ }],
+ ['unmount during article-list refresh ignores stale records and cannot unlock a new save',async()=>{
+  await newDraft();await click('下書き保存');await acknowledge();check(lists.length===2&&url().disabled,'Save did not retain the lock through refresh');const oldList=lists[1];await act(async()=>{root.unmount();});root=null;await setup();await newDraft();await edit('#markdown-body','# New editor pending save');await click('下書き保存');const before=values();let staleReads=0;const staleData={get articles(){staleReads++;return [{...saved,title:'Unmounted stale article'}];}};
+  await act(async()=>{oldList.resolve({ok:true,json:async()=>staleData});});check(staleReads===0,'Unmounted refresh consumed stale article records');equal(values(),before,'Unmounted refresh changed a new draft');check(lists.length===1,'Old refresh started a request in the new editor');check(url().disabled,'Old refresh unlocked the new save');check(!element('.draft-list').textContent.includes('Unmounted stale article'),'Stale records reached the new editor');await acknowledge();await listReply(1);check(!url().disabled&&!unloadWarns(),'New editor save did not settle independently');
+ }],
+ ['unmount during article-list refresh hides its late network failure from a new editor',async()=>{
+  await newDraft();await click('下書き保存');await acknowledge();const oldList=lists[1];await act(async()=>{root.unmount();});root=null;await setup();await newDraft();await click('下書き保存');const before=values();await act(async()=>{oldList.reject(new Error('Unmounted refresh failure'));});equal(values(),before,'Old list failure changed the new draft');check(!document.querySelector('.notice')?.textContent.includes('Unmounted refresh failure'),'Unmounted failure reached the new editor');check(url().disabled,'Unmounted failure unlocked a new save');await acknowledge();await listReply(1);check(!url().disabled,'New save stayed locked after old failure');
+ }],
+ ['invalid JSON save response preserves newer edits and retries the same article ID',async()=>{
+  await newDraft();await click('下書き保存');await edit('#markdown-body','# Newer after invalid JSON request');const before=values();await act(async()=>{posts[0].resolve(new Response('{invalid JSON',{status:200,headers:{'Content-Type':'application/json'}}));});equal(values(),before,'Invalid JSON response changed the draft');check(unloadWarns(),'Invalid JSON response cleared unsaved state');check(lists.length===1,'Invalid JSON response refreshed the list');check(element('.notice').textContent.length>0&&!element('.notice').textContent.includes('保存しました'),'Invalid JSON response was presented as saved');check(!url().disabled,'Invalid JSON response left editor locked');await click('下書き保存');check(sent(1).id===sent(0).id&&sent(1).markdown==='# Newer after invalid JSON request','Invalid JSON retry lost the ID or newer body');await acknowledge(1);await listReply(1);check(!unloadWarns(),'Valid retry stayed dirty');
+ }],
+ ['invalid JSON article-list refresh keeps publication acknowledged and newer edits unsaved',async()=>{
+  await newDraft();await act(async()=>{rights().click();});await click('公開する');await acknowledge();await edit('#markdown-body','# Newer during invalid JSON refresh');const before=values();await act(async()=>{lists[1].resolve(new Response('{invalid JSON',{status:200,headers:{'Content-Type':'application/json'}}));});equal(values(),before,'Invalid JSON refresh changed newer fields');check(unloadWarns(),'Invalid JSON refresh cleared newer unsaved state');check(element('.document-status').textContent==='公開中','Invalid JSON refresh lost acknowledged publication');check(element('#share-url').value.endsWith('/p/'+sent(0).id),'Invalid JSON refresh lost the acknowledged URL');const notice=element('.notice').textContent;check(notice.includes('公開しました。')&&notice.includes('まだ保存されていません')&&notice.includes('一覧'),'Invalid JSON refresh disguised the saved publication or newer edits');check(!url().disabled,'Invalid JSON refresh left editor locked');
+ }],
+ ['article-list network rejection keeps a confirmed save and allows a same-ID retry',async()=>{
+  await newDraft();await click('下書き保存');await acknowledge();await act(async()=>{lists[1].reject(new Error('Synthetic list network failure'));});check(!unloadWarns(),'List network failure made a confirmed save dirty');check(element('.document-status').textContent==='下書き','List failure changed publication state');check(!document.querySelector('#share-url'),'Draft save exposed a publication URL');const notice=element('.notice').textContent;check(notice.includes('下書きに保存しました。')&&notice.includes('一覧'),'List network failure disguised the confirmed save');check(element('.draft-list').textContent.includes('Saved fixture'),'List failure discarded existing records');check(!url().disabled,'List network failure left editor locked');await edit('#markdown-body','# Next save after list network failure');await click('下書き保存');check(sent(1).id===sent(0).id&&sent(1).markdown==='# Next save after list network failure','Retry after list rejection lost the ID or body');await acknowledge(1);await listReply(2);check(!url().disabled&&!unloadWarns(),'Retry after list rejection did not settle');
+ }],
+ ['unmount invalidates a save and its late success cannot reach a new editor',async()=>{
+  await newDraft();await click('下書き保存');const old=posts[0],input=sent(0);await act(async()=>{root.unmount();});root=null;await setup();const before=values();await act(async()=>{old.resolve(Response.json({id:input.id,published:false,url:'/p/'+input.id}));});equal(values(),before,'Unmounted save changed new editor');check(lists.length===1,'Unmounted save refreshed new editor');check(!url().disabled,'Old save locked new editor');
+ }],
+ ['old server capability failure never sends an unsafe legacy or editor POST',async()=>{
+  await newDraft();capability=()=>Response.json({error:'old server'},{status:404});await click('下書き保存');
+  check(posts.length===0,'Old server received a mutation');check(unloadWarns(),'Unsupported save cleared dirty');check(body().value==='# My edited body','Unsupported save lost body');check(element('.notice').textContent.includes('保存リクエストは送っていません'),'No-write result not explicit');
+ }],
+ ['wrong capability protocol fails before POST and keeps draft',async()=>{
+  await newDraft();capability=()=>Response.json({protocol:'different'});await click('下書き保存');check(posts.length===0&&unloadWarns(),'Wrong protocol wrote or cleared dirty');
+ }],
+ ['conflict refreshes only the list and never advances stale draft baseline',async()=>{
+  await click('Saved fixture公開中 · 2026-10-09');await edit('#markdown-body','# Local conflicting body');await click('非公開で保存');
+  const baseline=sent(0).expectedRevision;check(typeof baseline==='string'&&baseline.length===64,'Existing row missing full revision');
+  await acknowledge(0,{error:'Synthetic conflict; draft remains',code:'EDITOR_CONFLICT'},409);await listReply(1,[{...saved,title:'Latest title',markdown:'# Other writer body'}]);
+  check(body().value==='# Local conflicting body'&&unloadWarns(),'Conflict list refresh changed draft or dirty');check(button('Latest title公開中 · 2026-10-09'),'Latest row not reachable');
+  await click('非公開で保存');check(sent(1).expectedRevision===baseline,'List refresh advanced stale baseline');
+  await acknowledge(1,{error:'Synthetic conflict; draft remains',code:'EDITOR_CONFLICT'},409);await listReply(2,[{...saved,title:'Latest title',markdown:'# Other writer body'}]);
+  let confirmations=0;window.confirm=()=>{confirmations++;return false;};await click('Latest title公開中 · 2026-10-09');check(confirmations===1&&body().value==='# Local conflicting body','Reopen did not protect dirty draft');
+  window.confirm=()=>true;await click('Latest title公開中 · 2026-10-09');check(body().value==='# Other writer body'&&!unloadWarns(),'Explicit confirmed reopen did not use latest row');
+  await edit('#markdown-body','# Reconciled local body');await click('非公開で保存');check(sent(2).expectedRevision!==baseline,'Explicit latest reopen kept obsolete baseline');await acknowledge(2);await listReply(3);
+ }],
+
+];
+const results=[];
+async function run(){for(const [name,operation,defer] of tests){try{await setup(Boolean(defer));await operation();results.push({name,ok:true});}catch(error){results.push({name,ok:false,error:error.stack||String(error)});}finally{if(root){await act(async()=>{root.unmount();});root=null;}}}document.querySelector('#result').textContent=JSON.stringify({results});}
+window.editorSaveTestDone=run().catch(error=>{document.querySelector('#result').textContent=JSON.stringify({fatal:error.stack||String(error),results});});
+`;
+
+test('actual Editor save handlers protect current revisions with synthetic API replies',{timeout:15000},async t=>{
+ mkdirSync('.sites-runtime',{recursive:true});
+ const output=join(process.cwd(),'.sites-runtime/editor-save-test.mjs');
+ await build({stdin:{contents:fixture,loader:'tsx',resolveDir:process.cwd()},bundle:true,packages:'external',platform:'node',format:'esm',jsx:'automatic',outfile:output});
+ const window=new Window({url:'https://reader.example.test'});
+ window.document.body.innerHTML='<div id="root"></div><pre id="result">running</pre>';
+ const globals={window,document:window.document,navigator:window.navigator,HTMLElement:window.HTMLElement,HTMLInputElement:window.HTMLInputElement,HTMLTextAreaElement:window.HTMLTextAreaElement,Event:window.Event,Node:window.Node,MutationObserver:window.MutationObserver,IS_REACT_ACT_ENVIRONMENT:true,fetch:(...args)=>window.fetch(...args)};
+ const originals=new Map(Object.keys(globals).map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+ for(const [key,value] of Object.entries(globals))Object.defineProperty(globalThis,key,{value,writable:true,configurable:true});
+ try{
+  await import(pathToFileURL(output).href);
+  await window.editorSaveTestDone;
+  const report=JSON.parse(window.document.querySelector('#result').textContent);
+  assert.ok(!report.fatal,report.fatal);
+  assert.equal(report.results.length,44,'Incomplete save coverage');
+  for(const result of report.results)await t.test(result.name,()=>assert.equal(result.ok,true,result.error));
+ }finally{
+  await window.happyDOM.close();
+  for(const [key,descriptor] of originals){if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];}
+ }
+});
+));check(key&&typeof target[key].onClick==='function','Missing actual React click handler');return target[key].onClick;};
 const sent=index=>JSON.parse(posts[index].options.body);
 async function acknowledge(index=0,data,status=200){const input=sent(index);await act(async()=>{posts[index].resolve(Response.json(data===undefined?{protocol:'compare-v1',revision:'a'.repeat(64),id:input.id,published:input.published,url:'/p/'+input.id}:data,{status}));});}
 async function listReply(index,articles=[saved],status=200){await act(async()=>{lists[index].resolve(Response.json(status===200?{articles}:{error:'Synthetic list failure'},{status}));});}
@@ -83,13 +268,13 @@ const tests=[
  }],
  ['same-tick shrinking never submits the old oversized rendered payload',async()=>{
   await newDraft();await edit('#markdown-body','a'.repeat(200001));const calls=capabilityReads;
-  await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'修正');target.dispatchEvent(new Event('input',{bubbles:true}));button('下書き保存').click();});
+  await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'修正');target.dispatchEvent(new Event('input',{bubbles:true}));staleClick();});
   check(posts.length===0&&capabilityReads===calls,'Stale oversized payload reached network');
   await click('下書き保存');check(posts.length===1&&sent(0).markdown==='修正','Settled save failed');await acknowledge();await listReply(1);
  }],
  ['same-tick in-range edit does not save a stale Markdown payload',async()=>{
   await newDraft();const calls=capabilityReads;
-  await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'最新本文');target.dispatchEvent(new Event('input',{bubbles:true}));button('下書き保存').click();});
+  await act(async()=>{const target=body();Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(target,'最新本文');target.dispatchEvent(new Event('input',{bubbles:true}));staleClick();});
   check(posts.length===0&&capabilityReads===calls,'Stale in-range body was sent');
   await click('下書き保存');check(sent(0).markdown==='最新本文','Retry did not use new body');await acknowledge();await listReply(1);
  }],

@@ -125,7 +125,7 @@ export default function Editor({signOutPath}:{signOutPath:string}) {
   if(busy||saving.current||conversion.current)return;
   // Read the synchronous ref as well as the rendered payload: an input event
   // can precede a save click before React commits the next render.
-  if(new TextEncoder().encode(currentMarkdown.current).length>MAX_MARKDOWN_BYTES||markdownBytes>MAX_MARKDOWN_BYTES)return;
+  if(new TextEncoder().encode(currentMarkdown.current).length>MAX_MARKDOWN_BYTES||markdownBytes>MAX_MARKDOWN_BYTES){setMessage('保存リクエストは送っていません。本文はUTF-8で'+MAX_MARKDOWN_BYTES.toLocaleString()+' bytes以内にしてください。本文を短くするか、端末へ書き出して保管できます。');return;}
   if(currentMarkdown.current!==markdown){setMessage('本文の変更を反映しています。内容を確認して、もう一度保存してください。');return;}
   // A queued edit must invalidate confirmation before React rerenders. Also
   // reject handlers whose rendered payload predates an edit or a new check.
