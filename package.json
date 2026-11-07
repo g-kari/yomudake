@@ -5,7 +5,7 @@
   "type": "module",
   "engines": {
     "node": ">=24",
-    "pnpm": "11.25.0"
+    "pnpm": "11.28.11"
   },
   "scripts": {
     "build": "node scripts/build.mjs",
@@ -30,9 +30,9 @@
     "esbuild": "0.28.2",
     "happy-dom": "21.0.4",
     "miniflare": "5.20261006.1-alpha",
-    "playwright": "1.62.1",
-    "typescript": "5.9.3",
+    "playwright": "1.65.0",
+    "typescript": "7.0.2",
     "wrangler": "4.149.0"
   },
-  "packageManager": "pnpm@11.25.0"
+  "packageManager": "pnpm@11.28.11"
 }
