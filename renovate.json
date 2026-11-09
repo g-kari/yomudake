@@ -12,6 +12,12 @@
       ],
       "matchCurrentVersion": "!/^0/",
       "automerge": true
+    },
+    {
+      "matchDatasources": [
+        "npm"
+      ],
+      "minimumReleaseAge": "1 day"
     }
   ]
 }
