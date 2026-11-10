@@ -18,7 +18,7 @@
     "test:browser": "node tests/browser/notebook.mjs && node tests/browser/list-recovery.mjs && node tests/browser/article-outline.mjs && node tests/browser/article-pagination.mjs && node tests/browser/markdown-tables.mjs && node tests/browser/copy-feedback.mjs && node tests/browser/editor-conflict.mjs"
   },
   "dependencies": {
-    "jose": "6.2.15",
+    "jose": "6.2.16",
     "parse5": "8.1.1",
     "react": "19.3.1",
     "react-dom": "19.3.1"
