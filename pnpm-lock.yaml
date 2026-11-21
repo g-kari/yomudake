@@ -173,7 +173,7 @@ settings:
 
 overrides:
   miniflare@5.20261006.1-alpha>undici: 8.13.0
-  miniflare@5.20261104.0-beta>undici: 8.12.4
+  miniflare@5.20261104.0-beta>undici: 8.13.0
 
 importers:
 
