@@ -5,7 +5,7 @@ packages:
 # Apply upstream's 7.x fixes without changing either intended workerd version.
 overrides:
   'miniflare@5.20261006.1-alpha>undici': '8.13.1'
-  'miniflare@5.20261104.0-beta>undici': '8.12.4'
+  'miniflare@5.20261104.0-beta>undici': '8.13.1'
 
 # Only the existing native tooling may run dependency lifecycle scripts.
 allowBuilds:
