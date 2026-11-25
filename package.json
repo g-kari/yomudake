@@ -32,7 +32,7 @@
     "miniflare": "5.20261006.1-alpha",
     "playwright": "1.65.1",
     "typescript": "7.0.2",
-    "wrangler": "4.167.0"
+    "wrangler": "4.168.0"
   },
   "packageManager": "pnpm@12.23.0"
 }
